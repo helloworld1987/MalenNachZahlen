@@ -336,11 +336,11 @@ def place_numbers_smart(arr: np.ndarray, tile_large=100, tile_small=56, thresh=0
 # Rendering (Vorlage, Legende, Vorschau)
 # ==========================================================
 def render_template(arr, palette_map, font_size=8, thicken=False):
-    boundary = compute_boundaries_no_wrap(Image.fromarray(arr.astype(np.uint8), "L"))
+    boundary = compute_boundaries_no_wrap(Image.fromarray(arr.astype(np.uint8)))
     if thicken and HAVE_SCIPY and maximum_filter is not None:
         boundary = maximum_filter(boundary.astype(np.uint8), size=2) > 0
     canvas = Image.new("L", arr.shape[::-1], 255)
-    boundary_img = Image.fromarray(np.where(boundary, 0, 255).astype(np.uint8), "L")
+    boundary_img = Image.fromarray(np.where(boundary, 0, 255).astype(np.uint8))
     canvas = Image.composite(boundary_img, canvas, Image.fromarray((boundary>0).astype(np.uint8)*255))
     draw = ImageDraw.Draw(canvas)
     positions = place_numbers_smart(arr)
@@ -382,16 +382,16 @@ def render_preview(arr: np.ndarray,
     h, w = arr.shape; preview = np.zeros((h, w, 3), dtype=np.uint8)
     for lab, rgb in label_to_rgb.items():
         preview[arr == lab] = rgb
-    img = Image.fromarray(preview, "RGB")
+    img = Image.fromarray(preview)
     if not overlay_boundaries: return img
-    boundary_mask = compute_boundaries_no_wrap(Image.fromarray(arr.astype(np.uint8), "L"))
+    boundary_mask = compute_boundaries_no_wrap(Image.fromarray(arr.astype(np.uint8)))
     if line_thickness > 1 and HAVE_SCIPY and maximum_filter is not None:
         boundary_mask = maximum_filter(boundary_mask.astype(np.uint8), size=line_thickness) > 0
     if boundary_alpha <= 0: return img
     a = float(boundary_alpha) / 255.0; base = np.array(img, dtype=np.float32)
     bc = np.array(boundary_color, dtype=np.float32)
     base[boundary_mask] = (1.0 - a) * base[boundary_mask] + a * bc
-    return Image.fromarray(base.clip(0,255).astype(np.uint8), "RGB")
+    return Image.fromarray(base.clip(0,255).astype(np.uint8))
 
 # ==========================================================
 # Presets
@@ -542,7 +542,7 @@ def build_pdf(
 
     page1_big.save(out_pdf, "PDF", resolution=dpi, save_all=True,
                    append_images=[page2_big, page3_big])
-    progress(100, f"✅ PDF gespeichert: {out_pdf}")
+    progress(100, f"OK PDF gespeichert: {out_pdf}")
 
 # ==========================================================
 # CLI
