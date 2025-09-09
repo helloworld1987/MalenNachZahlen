@@ -32,7 +32,7 @@ Ideal für eigene Mal-Leinwände mit Amsterdam Acrylfarben.
 
 ```bash
 # Repository klonen
-git clone https://github.com/DEIN-USER/malen-nach-zahlen.git
+git clone https://github.com/helloworld1987/MalenNachZahlen.git
 cd malen-nach-zahlen
 
 # Virtuelle Umgebung anlegen (optional, empfohlen)
