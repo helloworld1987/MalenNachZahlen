@@ -1,10 +1,19 @@
 import argparse, os, sys, json, csv
 from collections import Counter
 from typing import List, Tuple, Optional
+from datetime import datetime
+
+# --- Drittanbieter ---
+try:
+    import yaml  # PyYAML
+    HAVE_YAML = True
+except Exception:
+    HAVE_YAML = False
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageEnhance
 from skimage import measure
+from skimage.color import rgb2lab, deltaE_cie76
 
 # Optional SciPy (Linienverdickung & exakte Zuordnung)
 try:
@@ -33,10 +42,22 @@ def _bar(pct, width=32):
     head = ">" if rem > 0 else ""
     return "[" + "="*filled + head + "."*(max(0, rem-1)) + "]"
 
-def progress(pct, msg):
-    pct = max(0, min(100, int(round(pct))))
-    print(f"{_bar(pct)} {pct:>3}%  {msg}")
+def progress(step, total_steps, msg, next_msg=None):
+    # Prozentsatz für den *Beginn* des Schritts berechnen
+    pct = int(round(((step - 1) / total_steps) * 100))
+    pct = max(0, min(100, pct))
+    bar = _bar(pct)
+    
+    # Text für den nächsten Schritt formatieren
+    next_step_text = f" | Als Nächstes: {next_msg}" if next_msg else ""
+    
+    # Zeile zusammenbauen und ausgeben
+    line = f"{bar} {pct:>3}% [Schritt {step}/{total_steps}] {msg.ljust(35)}{next_step_text}"
+    
+    # Terminalzeile löschen und neu schreiben
+    print(f"\x1b[2K\r{line}", end="")
     sys.stdout.flush()
+
 
 # ==========================================================
 # Font / Utils
@@ -61,96 +82,46 @@ def hex_to_rgb(hexstr: str) -> Tuple[int,int,int]:
     if len(s) != 6: raise ValueError(f"Invalid HEX: {hexstr}")
     return tuple(int(s[i:i+2], 16) for i in (0,2,4))
 
-# ==========================================================
-# Amsterdam-Standardpalette (deine vollständige Liste)
-# Format: (Name, Code, (R,G,B))
-# ==========================================================
-AMSTERDAM_COLORS: List[Tuple[str,int,Tuple[int,int,int]]] = [
-    ("Zinkwit", 104, (241,240,236)), ("Titaanwit", 105, (242,241,237)),
-    ("Titaanbuff licht", 289, (233,226,213)), ("Titaanbuff donker", 290, (224,213,196)),
-    ("Napelsgeel licht", 222, (238,228,198)), ("Napelsgeel groen", 282, (217,215,174)),
-    ("Napelsgeel donker", 223, (229,207,158)), ("Napelsgeel rood licht", 292, (227,201,163)),
-    ("Napelsgeel Rood", 224, (223,185,143)), ("Permanentcitroengeel licht", 217, (245,230,129)),
-    ("Nikkeltitaangeel", 274, (244,223,85)), ("Groengeel", 243, (213,218,61)),
-    ("Azogeel Lemon", 267, (242,214,43)), ("Primairgeel", 275, (246,204,36)),
-    ("Azogeel licht", 268, (250,204,38)), ("Transparantgeel middel", 272, (240,188,41)),
-    ("Azogeel middel", 269, (234,180,44)), ("Azogeel donker", 270, (226,165,45)),
-    ("Goudgeel", 253, (219,152,53)), ("Azo-oranje", 276, (221,131,55)),
-    ("Vermiljoen", 311, (212,77,56)), ("Naftolrood licht", 398, (211,67,64)),
-    ("Naftolrood middel", 396, (205,58,62)), ("Transparantrood middel", 317, (191,60,66)),
-    ("Pyrrolerood", 315, (195,50,56)), ("Naftolrood donker", 399, (183,48,61)),
-    ("Karmijn", 318, (181,48,64)), ("Primairmagenta", 369, (190,40,80)),
-    ("Permanentroodpurper", 348, (179,49,84)), ("Quinacridonerose", 366, (199,67,119)),
-    ("Venetiaansrose", 316, (204,126,126)), ("Perzischrose", 330, (200,115,130)),
-    ("Lichtrose", 361, (216,134,155)), ("Quinacridonerose licht", 385, (212,112,149)),
-    ("Permanent roodviolet licht", 577, (200,82,130)), ("Permanent roodviolet", 567, (174,67,120)),
-    ("Caput mortuum violet", 344, (116,69,83)), ("Permanentblauwviolet", 568, (91,63,110)),
-    ("Ultramarijnviolet", 507, (78,62,111)), ("Ultramarijnviolet licht", 519, (86,73,123)),
-    ("Lila", 556, (167,163,192)), ("Ultramarijn licht", 505, (102,122,179)),
-    ("Grijsblauw", 562, (96,122,148)), ("Ultramarijn", 504, (55,87,155)),
-    ("Kobaltblauw (ultram.)", 512, (44,88,152)), ("Primaircyaan", 572, (0,118,168)),
-    ("Phtaloblauw", 570, (0,81,134)), ("Mangaanblauw phtalo", 582, (0,108,143)),
-    ("Koningsblauw", 517, (64,113,162)), ("Briljantblauw", 564, (33,125,176)),
-    ("Hemelsblauw licht", 551, (114,163,193)), ("Pruisischblauw (phtalo)", 566, (45,78,97)),
-    ("Groenblauw", 557, (0,107,116)), ("Turkooisblauw", 522, (0,124,136)),
-    ("Turkooisgroen licht", 660, (97,167,155)), ("Turkooisgroen", 661, (0,129,127)),
-    ("Geelgroen licht", 664, (164,185,93)), ("Geelgroen", 617, (151,175,75)),
-    ("Briljantgroen", 605, (69,145,80)), ("Permanentgroen licht", 618, (51,132,82)),
-    ("Paul veronesegroen", 615, (0,115,96)), ("Permanentgroen donker", 619, (0,92,75)),
-    ("Phtalogroen", 575, (0,92,81)), ("Olijfgroen licht", 621, (128,135,80)),
-    ("Olijfgroen donker", 622, (91,100,66)), ("Sapgroen", 623, (82,97,56)),
-    ("Gele oker", 227, (194,150,64)), ("Goudoker", 231, (192,133,56)),
-    ("Sienna naturel", 234, (170,123,75)), ("Sienna gebrand", 411, (149,85,60)),
-    ("Omber naturel", 408, (108,93,71)), ("Omber gebrand", 409, (94,77,64)),
-    ("Van dijckbruin", 403, (82,71,64)), ("Warmgrijs", 718, (174,165,156)),
-    ("Blauwgrijs licht", 750, (147,152,158)), ("Neutraalgrijs", 710, (129,131,132)),
-    ("Paynesgrijs", 708, (65,73,80)), ("Lampzwart", 702, (57,57,57)),
-    ("Oxydzwart", 735, (58,57,57)), ("Zilver", 800, (171,170,168)),
-    ("Lichtgoud", 802, (190,161,109)), ("Donkergoud", 803, (167,126,77)),
-    ("Koper", 805, (161,110,81)), ("Brons", 811, (153,124,97)),
-    ("Tin", 815, (138,136,134)), ("Grafiet", 840, (112,111,111)),
-    ("Metallic geel", 831, (199,180,83)), ("Metallic rood", 832, (179,63,66)),
-    ("Metallic violet", 835, (125,86,124)), ("Metallic blauw", 834, (82,111,147)),
-    ("Metallic groen", 836, (63,127,107)), ("Metallic zwart", 850, (73,74,74)),
-    ("Parel wit", 817, (220,215,207)), ("Parel geel", 818, (216,204,161)),
-    ("Parel rood", 819, (195,154,160)), ("Parel blauw", 820, (136,157,185)),
-    ("Parel violet", 821, (163,152,178)), ("Parel groen", 822, (165,181,168)),
-    ("Reflex geel", 256, (227,224,46)), ("Reflex oranje", 257, (240,90,50)),
-    ("Reflex rose", 384, (234,55,100)), ("Reflex groen", 672, (157,207,64)),
-]
 
 # ==========================================================
-# Externe Palette (optional)
+# Presets & Palette laden
 # ==========================================================
-def load_palette_file(path: str) -> List[Tuple[str,int,Tuple[int,int,int]]]:
-    ext = os.path.splitext(path)[1].lower()
+def _read_csv_dicts(path: str):
+    with open(path, "r", encoding="utf-8-sig") as f:
+        buf = f.read(4096)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(buf)
+        except Exception:
+            dialect = csv.excel
+        return list(csv.DictReader(f, dialect=dialect))
+
+def load_palette_csv(path: str) -> List[Tuple[str,int,Tuple[int,int,int]]]:
     rows = []
-    if ext in (".csv", ".tsv"):
-        with open(path, "r", encoding="utf-8-sig") as f:
-            dialect = csv.Sniffer().sniff(f.read(4096))
-            f.seek(0); reader = csv.DictReader(f, dialect=dialect)
-            for row in reader:
-                name = row.get("name") or row.get("Name") or ""
-                code = int(row.get("code") or row.get("Code"))
-                if "hex" in row and row["hex"]:
-                    rgb = hex_to_rgb(row["hex"])
-                else:
-                    r = int(row.get("r") or row.get("R"))
-                    g = int(row.get("g") or row.get("G"))
-                    b = int(row.get("b") or row.get("B"))
-                    rgb = (r,g,b)
-                rows.append((name, code, rgb))
-    elif ext == ".json":
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            for item in data:
-                name = item["name"]; code = int(item["code"])
-                rgb = hex_to_rgb(item["hex"]) if "hex" in item else tuple(map(int, item["rgb"]))
-                rows.append((name, code, rgb))
-    else:
-        raise ValueError("Unsupported palette file. Use .csv/.tsv or .json")
-    if not rows: raise ValueError("Palette file is empty")
+    for row in _read_csv_dicts(path):
+        name = row.get("name") or row.get("Name") or ""
+        code = int(row.get("code") or row.get("Code"))
+        if "hex" in row and (row["hex"] or row.get("Hex")):
+            rgb = hex_to_rgb(row.get("hex") or row.get("Hex"))
+        else:
+            r = int(row.get("r") or row.get("R"))
+            g = int(row.get("g") or row.get("G"))
+            b = int(row.get("b") or row.get("B"))
+            rgb = (r,g,b)
+        rows.append((name, code, rgb))
+    if not rows:
+        raise ValueError("Palette file is empty")
     return rows
+
+def load_presets(path: str) -> dict:
+    if not HAVE_YAML:
+        raise ImportError("PyYAML ist nicht installiert. Bitte `pip install pyyaml` ausführen.")
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict) or not data:
+        raise ValueError("presets.yaml hat kein gültiges Mapping.")
+    return data
+
 
 # ==========================================================
 # Bildvorbereitung / Quantisierung
@@ -179,7 +150,7 @@ def preprocess_image(img: Image.Image,
     if bilateral and HAVE_BILATERAL:
         arr = np.asarray(out, dtype=np.float32)/255.0
         arr = denoise_bilateral(arr, sigma_color=0.06, sigma_spatial=3, channel_axis=2)
-        out = Image.fromarray((arr*255).clip(0,255).astype(np.uint8), 'RGB')
+        out = Image.fromarray((arr*255).clip(0,255).astype(np.uint8))
     return out
 
 def quantize_image(img: Image.Image, k=20):
@@ -189,8 +160,9 @@ def quantize_image(img: Image.Image, k=20):
     palette = np.array(pal, dtype=np.uint8).reshape(-1,3)
     return q.convert("P"), palette
 
+
 # ==========================================================
-# Konturen (ohne Wrap)
+# Konturen
 # ==========================================================
 def compute_boundaries_no_wrap(label_img: Image.Image) -> np.ndarray:
     arr = np.array(label_img); h, w = arr.shape
@@ -199,36 +171,72 @@ def compute_boundaries_no_wrap(label_img: Image.Image) -> np.ndarray:
     boundary[1:, :] |= (arr[1:, :] != arr[:-1, :]); boundary[:-1, :] |= (arr[:-1, :] != arr[1:, :])
     return boundary
 
+
 # ==========================================================
 # Farbzuordnung
 # ==========================================================
+def get_color_distance_matrix(colors1: np.ndarray, colors2: np.ndarray, metric="cielab") -> np.ndarray:
+    """Berechnet die Distanzmatrix zwischen zwei Paletten."""
+    if metric == "cielab":
+        # Konvertiere RGB zu LAB. Annahme: RGB ist im Bereich 0-255.
+        lab1 = rgb2lab(colors1.reshape(1, -1, 3) / 255.0).reshape(-1, 3)
+        lab2 = rgb2lab(colors2.reshape(1, -1, 3) / 255.0).reshape(-1, 3)
+        # Berechne DeltaE 76 für jedes Paar.
+        return deltaE_cie76(lab1[:, np.newaxis, :], lab2[np.newaxis, :, :])
+    else: # metric == "rgb"
+        # Klassische Euklidische Distanz im RGB-Raum.
+        return np.sqrt(((colors1[:, None, :] - colors2[None, :, :])**2).sum(axis=2))
+
 def map_palette_to_amsterdam(palette: np.ndarray,
-                             amsterdam: List[Tuple[str,int,Tuple[int,int,int]]]):
-    named_rgbs = np.array([rgb for (_,_,rgb) in amsterdam], dtype=np.float32)
+                             amsterdam: List[Tuple[str,int,Tuple[int,int,int]]],
+                             metric="cielab"):
+    named_rgbs = np.array([rgb for (_,_,rgb) in amsterdam], dtype=np.uint8)
+    
+    dist_matrix = get_color_distance_matrix(palette, named_rgbs, metric)
+    
     mapping = []
-    for i, rgb in enumerate(palette):
-        diff = named_rgbs - rgb.astype(np.float32)
-        idx = int(np.argmin(np.sqrt((diff**2).sum(axis=1))))
+    for i in range(palette.shape[0]):
+        idx = int(np.argmin(dist_matrix[i, :]))
         name, code, nrgb = amsterdam[idx]
         mapping.append((i+1, name, code, tuple(nrgb)))
     return mapping
 
 def assign_unique_amsterdam_weighted(palette: np.ndarray,
                                      label_img_arr: np.ndarray,
-                                     amsterdam: List[Tuple[str,int,Tuple[int,int,int]]]):
-    src = palette.astype(np.float32)
+                                     amsterdam: List[Tuple[str,int,Tuple[int,int,int]]],
+                                     metric="cielab"):
+    src_rgb = palette
     labels, counts = np.unique(label_img_arr, return_counts=True)
-    k = src.shape[0]
-    weights = np.ones(k, dtype=np.float32); weights[labels] = counts.astype(np.float32)
+    k = src_rgb.shape[0]
+    weights = np.ones(k, dtype=np.float32)
+    
+    # Sicherstellen, dass die Indizes übereinstimmen
+    label_map = {label: i for i, label in enumerate(np.unique(label_img_arr))}
+    if len(label_map) == k:
+        mapped_counts = np.zeros(k)
+        for label, count in zip(labels, counts):
+            if label in label_map:
+                mapped_counts[label_map[label]] = count
+        weights = mapped_counts.astype(np.float32)
+    else:
+        # Fallback, falls die Anzahl der Labels nicht mit der Palettengröße übereinstimmt
+        weights[labels] = counts.astype(np.float32)
+
     weights /= weights.max() + 1e-6
 
     am_names = [n for (n,_,_) in amsterdam]
     am_codes = [c for (_,c,_) in amsterdam]
-    am_rgbs  = np.array([rgb for (*_, rgb) in amsterdam], dtype=np.float32)
+    am_rgbs  = np.array([rgb for (*_, rgb) in amsterdam], dtype=np.uint8)
 
-    D = np.sqrt(((src[:,None,:] - am_rgbs[None,:,:])**2).sum(axis=2))
+    # Distanzmatrix mit der gewählten Metrik berechnen
+    dist_matrix = get_color_distance_matrix(src_rgb, am_rgbs, metric=metric)
+    
+    # Kostenmatrix mit Gewichtung der Flächengröße
     row_factors = 0.5 + 1.5*weights.reshape(-1,1)
-    cost = D * row_factors
+    cost = dist_matrix * row_factors
+
+    # deterministische Reihenfolge
+    np.random.seed(0)
 
     if HAVE_SCIPY and linear_sum_assignment is not None and cost.shape[1] >= cost.shape[0]:
         row_ind, col_ind = linear_sum_assignment(cost)
@@ -241,7 +249,7 @@ def assign_unique_amsterdam_weighted(palette: np.ndarray,
         return mapping
 
     used = set(); mapping = []
-    for i in range(src.shape[0]):
+    for i in range(src_rgb.shape[0]):
         order = np.argsort(cost[i])
         j = next((x for x in order if x not in used), order[0])
         used.add(j)
@@ -253,38 +261,57 @@ def assign_unique_amsterdam_weighted(palette: np.ndarray,
 def consolidate_by_amsterdam_code(arr: np.ndarray,
                                   palette_map: List[Tuple[int,str,int,Tuple[int,int,int]]],
                                   merge_close=False, close_thresh=18.0):
-    code_to_idx = {}; oldnum_to_newidx = {}; new_palette = []
+    """
+    Konsolidiert gleich-zugeordnete Amsterdam-Codes und (optional) mergen ähnlich naher Repräsentanten.
+    Gibt (arr_new, final_palette_map) zurück. final_palette_map hat Nummern ab 1.
+    """
+    # Mappe jeden ursprünglichen Farbindex (1..K) auf einen "neuen Palettenindex"
+    code_to_idx = {}
+    oldnum_to_newidx = {}
+    new_palette = []
     for (num, name, code, rgb) in palette_map:
         if code not in code_to_idx:
-            code_to_idx[code] = len(new_palette); new_palette.append((name, code, rgb))
+            code_to_idx[code] = len(new_palette)
+            new_palette.append((name, code, rgb))
         oldnum_to_newidx[num] = code_to_idx[code]
 
+    # Optional: ähnliche Ziel-RGBs clustern
     if merge_close and len(new_palette) > 1:
         reps = np.array([np.array(rgb, float) for (_, _, rgb) in new_palette])
-        used = [-1] * len(new_palette); rep_meta = []
+        used = [-1] * len(new_palette)
+        rep_meta = []
         for i in range(len(new_palette)):
-            if used[i] != -1: continue
-            rid = len(rep_meta); used[i] = rid; rep_meta.append(new_palette[i])
+            if used[i] != -1:
+                continue
+            rid = len(rep_meta)
+            used[i] = rid
+            rep_meta.append(new_palette[i])
             d = np.sqrt(((reps - reps[i])**2).sum(1))
             for j in range(i+1, len(new_palette)):
-                if used[j] == -1 and d[j] < close_thresh: used[j] = rid
+                if used[j] == -1 and d[j] < float(close_thresh):
+                    used[j] = rid
         newidx_to_cluster = {i: used[i] for i in range(len(new_palette))}
         oldnum_to_newidx = {old: newidx_to_cluster[new] for old, new in oldnum_to_newidx.items()}
         new_palette = rep_meta
 
-    lut = np.arange(arr.max()+1)
+    # LUT anwenden (arr enthält 0..K-1; palette_map-Nummern sind 1..K)
+    lut = np.arange(arr.max() + 1)
     for old_num, new_idx in oldnum_to_newidx.items():
-        lut[old_num-1] = new_idx
+        lut[old_num - 1] = new_idx
     arr_new = lut[arr]
 
-    used_vals = np.unique(arr_new); remap = {v: i for i, v in enumerate(used_vals)}
+    # Auf kompakte 0..N-1 relabeln
+    used_vals = np.unique(arr_new)
+    remap = {v: i for i, v in enumerate(used_vals)}
     arr_new = np.vectorize(remap.get)(arr_new)
 
+    # finale Palette mit 1..N Nummerierung bauen
     final_palette = []
     for v in used_vals:
         name, code, rgb = new_palette[v]
-        final_palette.append((len(final_palette)+1, name, code, rgb))
+        final_palette.append((len(final_palette) + 1, name, code, rgb))
     return arr_new, final_palette
+
 
 # ==========================================================
 # Flächen-Bereinigung & Nummern
@@ -332,8 +359,9 @@ def place_numbers_smart(arr: np.ndarray, tile_large=100, tile_small=56, thresh=0
             seen.add(key); dedup.append((x, y, lab))
     return dedup
 
+
 # ==========================================================
-# Rendering (Vorlage, Legende, Vorschau)
+# Rendering
 # ==========================================================
 def render_template(arr, palette_map, font_size=8, thicken=False):
     boundary = compute_boundaries_no_wrap(Image.fromarray(arr.astype(np.uint8)))
@@ -352,9 +380,13 @@ def render_template(arr, palette_map, font_size=8, thicken=False):
         draw.text((x-bbox[2]//2, y-bbox[3]//2), s, fill=0, font=font)
     return canvas.convert("RGB")
 
-def render_legend(palette_map, cols=2):
-    rows = len(palette_map); col_w, row_h, pad = 1200, 72, 40
-    width = col_w*cols + pad*2; height = pad*2 + row_h*((rows+cols-1)//cols) + 60
+def render_legend(palette_map, cols=None):
+    rows = len(palette_map)
+    if cols is None:
+        cols = 2 if rows <= 24 else (3 if rows <= 54 else 4)
+    col_w, row_h, pad = 1200, 72, 40
+    width = col_w*cols + pad*2
+    height = pad*2 + row_h*((rows+cols-1)//cols) + 60
     img = Image.new("RGB", (width, height), (255,255,255)); draw = ImageDraw.Draw(img)
     big, small = load_font(30), load_font(24)
     header = "Farblegende – Amsterdam Standard Series"
@@ -377,7 +409,6 @@ def render_preview(arr: np.ndarray,
                    boundary_color: Tuple[int,int,int] = (60, 60, 60),
                    boundary_alpha: int = 120,
                    line_thickness: int = 1):
-    """Seite 3: farbige Vorschau – Flächen ausmalen, Konturen oben drauf."""
     label_to_rgb = {i: palette_map[i][3] for i in range(len(palette_map))}
     h, w = arr.shape; preview = np.zeros((h, w, 3), dtype=np.uint8)
     for lab, rgb in label_to_rgb.items():
@@ -393,70 +424,6 @@ def render_preview(arr: np.ndarray,
     base[boundary_mask] = (1.0 - a) * base[boundary_mask] + a * bc
     return Image.fromarray(base.clip(0,255).astype(np.uint8))
 
-# ==========================================================
-# Presets
-# ==========================================================
-PRESETS = {
-    "sea-portrait": dict(
-        colors=72, width=6000, height=4000, min_region=80, font_size=10,
-        thicken_lines=False, merge_close=False, close_thresh=20.0,
-        force_unique=False,
-        autocontrast=True, gamma=1.00, color_boost=1.05, bilateral=False,
-        boundary_color=(60,60,60), boundary_alpha=120, line_thickness=1
-    ),
-    "portrait": dict(
-        colors=24, width=2000, height=1334, min_region=90, font_size=11,
-        thicken_lines=False, merge_close=False, close_thresh=18.0,
-        force_unique=False,
-        autocontrast=True, gamma=0.90, color_boost=1.08, bilateral=True,
-        boundary_color=(60,60,60), boundary_alpha=130, line_thickness=1
-    ),
-    "landscape-sky": dict(
-        colors=26, width=2400, height=1600, min_region=120, font_size=9,
-        thicken_lines=False, merge_close=False, close_thresh=20.0,
-        force_unique=False,
-        autocontrast=True, gamma=0.95, color_boost=1.03, bilateral=True,
-        boundary_color=(70,70,70), boundary_alpha=120, line_thickness=1
-    ),
-    "high-contrast": dict(
-        colors=18, width=2000, height=1334, min_region=140, font_size=9,
-        thicken_lines=True, merge_close=True, close_thresh=16.0,
-        force_unique=False,
-        autocontrast=True, gamma=0.85, color_boost=1.10, bilateral=False,
-        boundary_color=(40,40,40), boundary_alpha=160, line_thickness=2
-    ),
-    "draft-fast": dict(
-        colors=16, width=1600, height=1066, min_region=120, font_size=8,
-        thicken_lines=False, merge_close=False, close_thresh=18.0,
-        force_unique=False,
-        autocontrast=True, gamma=1.00, color_boost=1.00, bilateral=False,
-        boundary_color=(70,70,70), boundary_alpha=150, line_thickness=1
-    ),
-}
-
-def apply_preset(args, preset_name):
-    cfg = PRESETS[preset_name].copy()
-    # Nur Parameter überschreiben, die der Nutzer EXPLIZIT setzt (args.* != None)
-    def pick(name, val): return val if val is not None else cfg.get(name)
-    merged = dict(
-        colors=pick("colors", args.colors),
-        width=pick("width", args.width),
-        height=pick("height", args.height),
-        min_region=pick("min_region", args.min_region),
-        font_size=pick("font_size", args.font_size),
-        thicken_lines=pick("thicken_lines", args.thicken_lines),
-        merge_close=pick("merge_close", args.merge_close),
-        close_thresh=pick("close_thresh", args.close_thresh),
-        force_unique=pick("force_unique", args.force_unique),
-        autocontrast=pick("autocontrast", args.autocontrast),
-        gamma=pick("gamma", args.gamma),
-        color_boost=pick("color_boost", args.color_boost),
-        bilateral=pick("bilateral", args.bilateral),
-        boundary_color=pick("boundary_color", tuple(args.boundary_color) if args.boundary_color else None),
-        boundary_alpha=pick("boundary_alpha", args.boundary_alpha),
-        line_thickness=pick("line_thickness", args.line_thickness),
-    )
-    return merged
 
 # ==========================================================
 # Pipeline
@@ -480,7 +447,8 @@ def build_pdf(
     boundary_color: Tuple[int,int,int],
     boundary_alpha: int,
     line_thickness: int,
-    palette_path: Optional[str] = None,
+    palette: List[Tuple[str,int,Tuple[int,int,int]]],
+    color_metric: str,
 ):
     if not os.path.exists(input_path):
         print(f"❌ Datei nicht gefunden: {input_path}"); return
@@ -489,126 +457,158 @@ def build_pdf(
     except Exception as e:
         print(f"❌ Fehler beim Laden: {e}"); return
 
-    # Palette (intern oder extern)
-    if palette_path:
-        try:
-            amsterdam = load_palette_file(palette_path)
-            progress(3, f"Palette geladen: {len(amsterdam)} Farben")
-        except Exception as e:
-            print(f"⚠️  Konnte Palette nicht laden ({e}). Nutze interne Liste.")
-            amsterdam = AMSTERDAM_COLORS
-    else:
-        amsterdam = AMSTERDAM_COLORS
-        progress(3, f"Interne Palette aktiv: {len(amsterdam)} Farben")
-
-    progress(5,  "Bild geladen")
-    img = center_crop_to_ratio(img, 3/2).resize((work_w, work_h), Image.Resampling.LANCZOS)
-    img = preprocess_image(img, do_autocontrast=autocontrast, gamma=gamma,
-                           color_boost=color_boost, bilateral=bilateral)
-    progress(18, "Vorverarbeitung angewendet")
-
-    label_img, pal = quantize_image(img, k=colors)
-    arr = np.array(label_img, dtype=np.uint8)
-    progress(30, "Quantisierung abgeschlossen")
-
-    arr = merge_small_regions(arr, min_area=min_region)
-    progress(45, "Kleine Flächen verschmolzen")
-
-    if force_unique:
-        palette_map = assign_unique_amsterdam_weighted(pal, arr, amsterdam)
-        progress(60, "Eindeutige Amsterdam-Farben zugeordnet (weighted)")
-    else:
-        palette_map = map_palette_to_amsterdam(pal, amsterdam)
-        arr, palette_map = consolidate_by_amsterdam_code(arr, palette_map,
-                                                         merge_close=merge_close,
-                                                         close_thresh=close_thresh)
-        progress(60, f"Farben konsolidiert (verbleibend: {len(palette_map)})")
-
-    page1 = render_template(arr, palette_map, font_size=font_size, thicken=thicken_lines)
-    legend_cols = 2 if len(palette_map) <= 24 else 3
-    page2 = render_legend(palette_map, cols=legend_cols)
-    page3 = render_preview(arr, palette_map, overlay_boundaries=True,
-                           boundary_color=boundary_color,
-                           boundary_alpha=boundary_alpha,
+    # --- Pipeline-Schritte definieren ---
+    steps = [
+        ("Vorbereitung", lambda: preprocess_image(
+            center_crop_to_ratio(img, 3/2).resize((work_w, work_h), Image.Resampling.LANCZOS),
+            do_autocontrast=autocontrast, gamma=gamma, color_boost=color_boost, bilateral=bilateral
+        )),
+        (f"Quantisierung ({colors} Farben)", lambda: quantize_image(img, k=colors)),
+        ("Flächenbereinigung", lambda: merge_small_regions(arr, min_area=min_region)),
+        ("Farbzuordnung", lambda: (
+            assign_unique_amsterdam_weighted(pal, arr, palette) if force_unique
+            else consolidate_by_amsterdam_code(
+                    arr, map_palette_to_amsterdam(pal, palette),
+                    merge_close=merge_close, close_thresh=close_thresh
+                 )
+        )),
+        ("Seiten-Rendering", lambda: (
+            render_template(arr, palette_map, font_size=font_size, thicken=thicken_lines),
+            render_legend(palette_map, cols=None),
+            render_preview(arr, palette_map, overlay_boundaries=True,
+                           boundary_color=boundary_color, boundary_alpha=boundary_alpha,
                            line_thickness=line_thickness)
-    progress(85, "Rendering der Seiten")
+        )),
+        ("PDF-Skalierung", lambda: (
+            page1.resize((int(60/2.54*300), int(40/2.54*300)), Image.Resampling.NEAREST),
+            page2.resize((int(60/2.54*300), int(page2.height*int(60/2.54*300)/page2.width)), Image.Resampling.NEAREST),
+            page3.resize((int(60/2.54*300), int(40/2.54*300)), Image.Resampling.NEAREST)
+        )),
+        ("PDF-Speicherung", lambda: page1_big.save(out_pdf, "PDF", resolution=300, save_all=True, append_images=[page2_big, page3_big]))
+    ]
+    total_steps = len(steps)
 
-    dpi = 300
-    target_px = (int(60/2.54*dpi), int(40/2.54*dpi))
-    page1_big = page1.resize(target_px, Image.Resampling.NEAREST)
-    page2_big = page2.resize((target_px[0], int(page2.height*target_px[0]/page2.width)),
-                             Image.Resampling.NEAREST)
-    page3_big = page3.resize(target_px, Image.Resampling.NEAREST)
+    # --- Pipeline ausführen ---
+    for i, (title, func) in enumerate(steps):
+        current_step = i + 1
+        next_title = steps[i+1][0] if i + 1 < total_steps else "Fertigstellung"
+        progress(current_step, total_steps, title, next_msg=next_title)
 
-    page1_big.save(out_pdf, "PDF", resolution=dpi, save_all=True,
-                   append_images=[page2_big, page3_big])
-    progress(100, f"OK PDF gespeichert: {out_pdf}")
+        if title.startswith("Vorbereitung"):
+            img = func()
+        elif title.startswith("Quantisierung"):
+            label_img, pal = func()
+            arr = np.array(label_img, dtype=np.uint8)
+        elif title.startswith("Flächenbereinigung"):
+            arr = func()
+        elif title.startswith("Farbzuordnung"):
+            if force_unique:
+                palette_map = assign_unique_amsterdam_weighted(pal, arr, palette, metric=color_metric)
+            else:
+                amsterdam_map = map_palette_to_amsterdam(pal, palette, metric=color_metric)
+                arr, palette_map = consolidate_by_amsterdam_code(
+                    arr, amsterdam_map,
+                    merge_close=merge_close, close_thresh=close_thresh
+                )
+        elif title.startswith("Seiten-Rendering"):
+            page1, page2, page3 = func()
+        elif title.startswith("PDF-Skalierung"):
+            page1_big, page2_big, page3_big = func()
+        elif title.startswith("PDF-Speicherung"):
+            func()
+
+    progress(total_steps, total_steps, "PDF gespeichert", "✅")
+    print(f"\n\n✅ Fertig! PDF gespeichert unter: {out_pdf}")
+    print(f"Erstellt am: {datetime.now().isoformat(timespec='seconds')}")
+
 
 # ==========================================================
 # CLI
 # ==========================================================
 def main():
-    ap = argparse.ArgumentParser(description="Malen-nach-Zahlen Generator (Presets, Amsterdam, Vorschau, Fortschritt)")
+    ap = argparse.ArgumentParser(description="Malen-nach-Zahlen Generator")
     ap.add_argument("input", help="Eingabebild (JPG/PNG)")
-    ap.add_argument("--out", default="malen_nach_zahlen.pdf")
+    ap.add_argument("--out", default="malen_nach_zahlen.pdf", help="Ausgabe-PDF-Datei")
+    ap.add_argument("--preset", type=str, help="Preset-Name aus presets.yaml")
+    ap.add_argument("--presets", type=str, default="presets.yaml", help="Pfad zur presets.yaml")
+    ap.add_argument("--palette", type=str, default="amsterdam_standard.csv", help="Pfad zur CSV-Palette")
 
-    # Defaults = None -> so erkennen wir, was der Nutzer explizit setzt (→ Preset kann Rest füllen)
-    ap.add_argument("--preset", choices=list(PRESETS.keys()))
-    ap.add_argument("--colors", type=int, default=None)
-    ap.add_argument("--width", type=int, default=None)
-    ap.add_argument("--height", type=int, default=None)
-    ap.add_argument("--min-region", type=int, default=None)
-    ap.add_argument("--font-size", type=int, default=None)
-    ap.add_argument("--thicken-lines", action="store_true", default=None)
-    ap.add_argument("--merge-close", action="store_true", default=None)
-    ap.add_argument("--close-thresh", type=float, default=None)
-    ap.add_argument("--force-unique", action="store_true", default=None)
+    # --- Direkte Konfigurations-Argumente ---
+    g = ap.add_argument_group("Allgemeine Einstellungen")
+    g.add_argument("--colors", type=int, help="Anzahl der Farben (z.B. 20)")
+    g.add_argument("--width", type=int, help="Arbeitsbreite des Bildes (z.B. 1800)")
+    g.add_argument("--height", type=int, help="Arbeitshöhe des Bildes (z.B. 1200)")
+    g.add_argument("--font-size", type=int, help="Schriftgröße für die Nummern (z.B. 9)")
+    g.add_argument("--force-unique", action="store_true", help="Jeder Farbe eine eindeutige Amsterdam-Nr zuweisen")
 
-    # Preprocess
-    ap.add_argument("--autocontrast", action="store_true", default=None)
-    ap.add_argument("--gamma", type=float, default=None)
-    ap.add_argument("--color-boost", type=float, default=None)
-    ap.add_argument("--bilateral", action="store_true", default=None)
+    g = ap.add_argument_group("Vorverarbeitung")
+    g.add_argument("--autocontrast", action=argparse.BooleanOptionalAction, help="Automatischer Kontrast")
+    g.add_argument("--gamma", type=float, help="Gamma-Korrektur (z.B. 0.9)")
+    g.add_argument("--color-boost", type=float, help="Farb-Verstärkung (z.B. 1.05)")
+    g.add_argument("--bilateral", action=argparse.BooleanOptionalAction, help="Bilateral-Filter zur leichten Glättung")
 
-    # Preview line
-    ap.add_argument("--boundary-color", nargs=3, type=int, default=None, metavar=("R","G","B"))
-    ap.add_argument("--boundary-alpha", type=int, default=None)
-    ap.add_argument("--line-thickness", type=int, default=None)
+    g = ap.add_argument_group("Detail-Einstellungen")
+    g.add_argument("--min-region", type=int, help="Minimale Fläche für eine Region (z.B. 120)")
+    g.add_argument("--thicken-lines", action=argparse.BooleanOptionalAction, help="Konturlinien verdicken")
+    g.add_argument("--merge-close", action=argparse.BooleanOptionalAction, help="Ähnliche Farben zusammenführen")
+    g.add_argument("--close-thresh", type=float, help="Schwellwert für das Zusammenführen (z.B. 18.0)")
 
-    ap.add_argument("--palette", type=str, default=None,
-                    help="Externe Palette (CSV/JSON) mit name,code,hex ODER name,code,r,g,b")
+    g = ap.add_argument_group("Vorschau-Rendering")
+    g.add_argument("--boundary-color", type=str, help="Farbe der Konturlinien (HEX, z.B. #3C3C3C)")
+    g.add_argument("--boundary-alpha", type=int, help="Transparenz der Konturlinien (0-255)")
+    g.add_argument("--line-thickness", type=int, help="Dicke der Linien in der Vorschau (z.B. 1)")
+
+    ap.add_argument("--color-metric", type=str, default="cielab", choices=["rgb", "cielab"],
+                    help="Metrik für den Farbabstand ('rgb' oder 'cielab' für bessere Wahrnehmung)")
 
     args = ap.parse_args()
 
-    # Basis-Defaults (falls kein Preset & keine Flags)
-    base = dict(colors=20, width=1800, height=1200, min_region=120, font_size=8,
-                thicken_lines=False, merge_close=False, close_thresh=18.0,
-                force_unique=False, autocontrast=True, gamma=0.90, color_boost=1.05,
-                bilateral=False, boundary_color=(60,60,60), boundary_alpha=120, line_thickness=1)
+    if not HAVE_YAML and args.preset:
+        print("❌ PyYAML fehlt. Bitte installieren:  pip install pyyaml")
+        sys.exit(1)
 
-    cfg = base if args.preset is None else apply_preset(args, args.preset)
+    # --- Konfiguration laden & übersteuern ---
+    cfg = {
+        "colors": 20, "width": 1800, "height": 1200, "font_size": 9,
+        "force_unique": False,
+        "boundary_color": (60,60,60), "boundary_alpha": 120, "line_thickness": 1,
+        "preprocess": {"autocontrast": True, "gamma": 0.9, "colorboost": 1.05, "bilateral": False},
+        "detail": {"min_region": 120, "thicken_lines": False, "merge_close": False, "close_thresh": 18.0}
+    }
 
-    # Falls kein Preset, aber Nutzer hat Flags gesetzt → über base drübermappen
-    if args.preset is None:
-        def pick(name, val): return cfg[name] if val is None else (tuple(val) if name=="boundary_color" and val is not None else val)
-        cfg = dict(
-            colors=pick("colors", args.colors),
-            width=pick("width", args.width),
-            height=pick("height", args.height),
-            min_region=pick("min_region", args.min_region),
-            font_size=pick("font_size", args.font_size),
-            thicken_lines=pick("thicken_lines", args.thicken_lines),
-            merge_close=pick("merge_close", args.merge_close),
-            close_thresh=pick("close_thresh", args.close_thresh),
-            force_unique=pick("force_unique", args.force_unique),
-            autocontrast=pick("autocontrast", args.autocontrast),
-            gamma=pick("gamma", args.gamma),
-            color_boost=pick("color_boost", args.color_boost),
-            bilateral=pick("bilateral", args.bilateral),
-            boundary_color=pick("boundary_color", args.boundary_color),
-            boundary_alpha=pick("boundary_alpha", args.boundary_alpha),
-            line_thickness=pick("line_thickness", args.line_thickness),
-        )
+    if args.preset:
+        presets = load_presets(args.presets)
+        if args.preset not in presets:
+            print(f"❌ Preset '{args.preset}' nicht gefunden in {args.presets}")
+            print(f"   Verfügbare Presets: {', '.join(sorted(presets.keys()))}")
+            sys.exit(1)
+        preset_cfg = presets[args.preset]
+        cfg.update(preset_cfg)
+        if "preprocess" in preset_cfg: cfg["preprocess"].update(preset_cfg["preprocess"])
+        if "detail" in preset_cfg: cfg["detail"].update(preset_cfg["detail"])
+
+    # Kommandozeilen-Argumente übersteuern alles
+    if args.colors is not None: cfg["colors"] = args.colors
+    if args.width is not None: cfg["width"] = args.width
+    if args.height is not None: cfg["height"] = args.height
+    if args.font_size is not None: cfg["font_size"] = args.font_size
+    if args.force_unique: cfg["force_unique"] = True
+    if args.boundary_color is not None: cfg["boundary_color"] = hex_to_rgb(args.boundary_color)
+    if args.boundary_alpha is not None: cfg["boundary_alpha"] = args.boundary_alpha
+    if args.line_thickness is not None: cfg["line_thickness"] = args.line_thickness
+
+    if args.autocontrast is not None: cfg["preprocess"]["autocontrast"] = args.autocontrast
+    if args.gamma is not None: cfg["preprocess"]["gamma"] = args.gamma
+    if args.color_boost is not None: cfg["preprocess"]["colorboost"] = args.color_boost
+    if args.bilateral is not None: cfg["preprocess"]["bilateral"] = args.bilateral
+
+    if args.min_region is not None: cfg["detail"]["min_region"] = args.min_region
+    if args.thicken_lines is not None: cfg["detail"]["thicken_lines"] = args.thicken_lines
+    if args.merge_close is not None: cfg["detail"]["merge_close"] = args.merge_close
+    if args.close_thresh is not None: cfg["detail"]["close_thresh"] = args.close_thresh
+
+    palette = load_palette_csv(args.palette)
+    print(f"🎨 Palette '{os.path.basename(args.palette)}' geladen mit {len(palette)} Farben.")
 
     build_pdf(
         input_path=args.input,
@@ -616,21 +616,28 @@ def main():
         colors=cfg["colors"],
         work_w=cfg["width"],
         work_h=cfg["height"],
-        min_region=cfg["min_region"],
+        min_region=cfg["detail"]["min_region"],
         font_size=cfg["font_size"],
-        thicken_lines=cfg["thicken_lines"],
-        merge_close=cfg["merge_close"],
-        close_thresh=cfg["close_thresh"],
+        thicken_lines=cfg["detail"]["thicken_lines"],
+        merge_close=cfg["detail"]["merge_close"],
+        close_thresh=float(cfg["detail"]["close_thresh"]),
         force_unique=cfg["force_unique"],
-        autocontrast=cfg["autocontrast"],
-        gamma=cfg["gamma"],
-        color_boost=cfg["color_boost"],
-        bilateral=cfg["bilateral"],
-        boundary_color=cfg["boundary_color"],
-        boundary_alpha=cfg["boundary_alpha"],
-        line_thickness=cfg["line_thickness"],
-        palette_path=args.palette,
+        autocontrast=bool(cfg["preprocess"]["autocontrast"]),
+        gamma=float(cfg["preprocess"]["gamma"]),
+        color_boost=float(cfg["preprocess"]["colorboost"]),
+        bilateral=bool(cfg["preprocess"]["bilateral"]),
+        boundary_color=tuple(cfg["boundary_color"]),
+        boundary_alpha=int(cfg["boundary_alpha"]),
+        line_thickness=int(cfg["line_thickness"]),
+        palette=palette,
+        color_metric=args.color_metric,
     )
 
+def _print_version():
+    print("mnz-generator 1.0.0")
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 2 and sys.argv[1] in {"-V", "--version"}:
+        _print_version()
+    else:
+        main()
