@@ -100,6 +100,30 @@ python malen_nach_zahlen.py bild.jpg   --colors 34 --width 3200 --height 2134   
 - `--boundary-alpha` → Transparenz der Vorschau-Konturen (0–255)  
 - `--line-thickness` → Konturstärke (1–3, mit SciPy >1 möglich)
 
+### ℹ️ Hinweis zu `--merge-close` und `--close-thresh`
+
+Die Option `--merge-close` fasst **sehr ähnliche Farben** zusammen, um die Palette zu vereinfachen.  
+`--close-thresh` legt dabei den **RGB-Abstand** fest, ab wann zwei Farben als „ähnlich“ gelten.
+
+- Formel:  
+  \[
+  d = \sqrt{(R_1-R_2)^2 + (G_1-G_2)^2 + (B_1-B_2)^2}
+  \]
+
+- Wenn `d < close-thresh`, werden die Farben gemerged.
+
+#### Empfohlene Werte
+| Szenario             | Schwelle | Wirkung |
+|----------------------|----------|---------|
+| **Portraits**        | 12–14    | Bewahrt feine Hautnuancen, kaum Doppelungen |
+| **Meer/Himmel**      | 14–16    | Vermeidet 2–3 fast gleiche Blautöne, Details bleiben sichtbar |
+| **Landschaften**     | 16–20    | Vereinfacht viele Grüntöne, ruhigeres Bild |
+| **Grafisch/Poster**  | 20–24    | Maximale Vereinfachung, deutliche Reduktion der Farbvielfalt |
+
+#### Merke
+- **Kleinere Werte** → mehr Details, aber evtl. sehr ähnliche Farben in der Legende.  
+- **Größere Werte** → ruhigeres Bild, aber Gefahr, dass Nuancen verloren gehen.  
+
 ---
 
 ## 📄 Output
