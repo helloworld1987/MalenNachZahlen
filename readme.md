@@ -49,6 +49,7 @@ pip install -r requirements.txt
 pillow
 numpy
 scikit-image
+PyYAML
 scipy     # optional, für bessere Linienverdickung & Matching
 ```
 
@@ -147,6 +148,30 @@ Die Option `--merge-close` fasst **sehr ähnliche Farben** zusammen, um die Pale
   - Weniger Farben (16–20)  
   - `--min-region` erhöhen (120–150)  
   - `--merge-close` aktivieren  
+
+---
+## 📜 Changelog
+
+### v1.1.0 (2025-09-10)
+
+-   **Feature: Perzeptuelle Farbmetrik (CIELAB)**
+    -   Neues Argument `--color-metric` (Standard: `cielab`).
+    -   Verwendet den CIELAB-Farbraum zur Berechnung von Farbabständen, was die menschliche Wahrnehmung besser widerspiegelt.
+    -   **Problembehebung:** Helle Blautöne werden nun deutlich besser von Weiß unterschieden.
+    -   Die alte Methode ist weiterhin über `--color-metric rgb` verfügbar.
+
+-   **Verbesserung: Detaillierte Fortschrittsanzeige**
+    -   Die Konsole zeigt nun den aktuellen Schritt und den nächsten anstehenden Schritt an.
+
+-   **Verbesserung: Alle Parameter per CLI steuerbar**
+    -   Alle Konfigurationsoptionen (z.B. `gamma`, `min_region`) können nun direkt als Kommandozeilen-Argumente übergeben werden und überschreiben die Preset-Werte.
+
+### v1.0.1 (2025-09-10)
+
+-   **Fix:** Behebt einen `ValueError` im Schritt `Flächenbereinigung` durch korrekte Datenübergabe.
+-   **Fix:** Löst einen `NameError` in der gewichteten Farbzuordnung.
+-   **Verbesserung:** Die Konsolen-Fortschrittsanzeige wird nun sauber ohne Artefakte gerendert.
+-   **Wartung:** Veralteter `mode`-Parameter bei `Image.fromarray()` entfernt, um Kompatibilität mit zukünftigen Pillow-Versionen zu gewährleisten.
 
 ---
 
