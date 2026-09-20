@@ -747,7 +747,7 @@ function boxBlurFloat(input, w, h, radius) {
 // Authentic Acrylic Impasto & Flow-Guided Paint Shader (Reverse-Engineered from Reference Painting)
 // Uses Structure Tensor image flow so strokes naturally follow 3D object contours
 // (horizontal road/curb, vertical buildings/legs, perspective curves on cars),
-// and Line Integral Convolution (LIC) for real finite physical brush dragging
+// shuffled discrete physical brush strokes per region, and Amsterdam satin sheen
 function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, regions, preprocessedPixels, strength = 1.0) {
   const total = width * height;
 
@@ -787,104 +787,132 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
   const sJyy = boxBlurFloat(jyy, width, height, 3);
   const sJxy = boxBlurFloat(jxy, width, height, 3);
 
-  // 3. Dominant Flow Angle Field (tangent to image contours) & Coherence
-  const cosA = new Float32Array(total);
-  const sinA = new Float32Array(total);
-
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width;
-    for (let x = 0; x < width; x++) {
-      const idx = rowOffset + x;
-      const xx = sJxx[idx], yy = sJyy[idx], xy = sJxy[idx];
-      const coherence = Math.sqrt((xx - yy) * (xx - yy) + 4 * xy * xy) / (xx + yy + 1e-4);
-
-      // Tangent angle along object forms (perpendicular to gradient)
-      const strokeAngle = 0.5 * Math.atan2(2 * xy, xx - yy) + 1.5708;
-
-      // Natural artist hand drift for flat areas
-      const handAngle = 0.785 + Math.sin(x * 0.015 + y * 0.01) * 0.45 + Math.cos(x * 0.008 - y * 0.02) * 0.35;
-
-      const flowW = Math.min(1.0, coherence * 2.2);
-      const angle = strokeAngle * flowW + handAngle * (1.0 - flowW);
-
-      cosA[idx] = Math.cos(angle);
-      sinA[idx] = Math.sin(angle);
-    }
-  }
-
-  // 4. Line Integral Convolution (LIC) for authentic finite brush stroke drag marks
-  const noise = new Float32Array(total);
-  let seed = 123456789;
-  for (let i = 0; i < total; i++) {
-    seed = (seed * 1664525 + 1013904223) | 0;
-    noise[i] = ((seed >>> 16) & 0xffff) / 32768.0 - 1.0;
-  }
-
-  const licTexture = new Float32Array(total);
-  const weights = [0.1, 0.25, 0.5, 0.8, 1.0, 0.8, 0.5, 0.25, 0.1];
-  const totalWeight = 4.3;
-  const stepSize = 2.4;
-
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width;
-    for (let x = 0; x < width; x++) {
-      const idx = rowOffset + x;
-      const c = cosA[idx] * stepSize;
-      const s = sinA[idx] * stepSize;
-
-      let acc = 0;
-      for (let k = -4; k <= 4; k++) {
-        const sx = Math.max(0, Math.min(width - 1, (x + k * c + 0.5) | 0));
-        const sy = Math.max(0, Math.min(height - 1, (y + k * s + 0.5) | 0));
-        acc += noise[sy * width + sx] * weights[k + 4];
-      }
-      licTexture[idx] = acc / totalWeight;
-    }
-  }
-
-  // 5. Build Surface Impasto Height Map H & Apply Pigment Nuance
+  // 3. Initialize Height Map with Canvas Linen Weave Base
   const H = new Float32Array(total);
-
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
-      const idx = rowOffset + x;
-      const p = idx * 4;
+      H[rowOffset + x] = Math.sin(x * 1.745) * Math.sin(y * 1.745) * 0.45;
+    }
+  }
 
-      const c = cosA[idx], s = sinA[idx];
-      const v = -x * s + y * c;
+  // 4. Generate Stroke Seeds on Grid with Jitter
+  const strokeSpacing = 14;
+  const brushLen = 36;
+  const brushRadius = 8.5;
 
-      // Fine bristle grooves perpendicular to flow (spacing ~ 3.2px)
-      const bristle = 0.50 * Math.sin(v * 1.96) + 0.30 * Math.sin(v * 1.21 + 1.2) + 0.20 * Math.sin(v * 0.74 + 2.4);
+  let seedRng = 42;
+  function fastRand() {
+    seedRng = (seedRng * 1664525 + 1013904223) | 0;
+    return ((seedRng >>> 0) / 4294967296.0);
+  }
 
-      // Canvas linen weave (orthogonal warp & weft threads, 3.6px pitch)
-      const canvasWeave = (Math.sin(x * 1.745) * Math.sin(y * 1.745)) * 0.45;
+  const strokes = [];
+  for (let y = 0; y < height; y += strokeSpacing) {
+    for (let x = 0; x < width; x += strokeSpacing) {
+      const jx = Math.round(x + (fastRand() - 0.5) * strokeSpacing * 0.9);
+      const jy = Math.round(y + (fastRand() - 0.5) * strokeSpacing * 0.9);
+      if (jx >= 0 && jx < width && jy >= 0 && jy < height) {
+        const idx = jy * width + jx;
+        const r = labels ? labels[idx] : 0;
+        strokes.push({ x: jx, y: jy, r: r });
+      }
+    }
+  }
 
-      const lumVal = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
-      const lumFactor = 0.35 + lumVal * 0.85;
+  // SHUFFLE strokes with Fisher-Yates so they never execute in rows
+  for (let i = strokes.length - 1; i > 0; i--) {
+    const j = Math.floor(fastRand() * (i + 1));
+    const temp = strokes[i];
+    strokes[i] = strokes[j];
+    strokes[j] = temp;
+  }
 
-      const stroke = licTexture[idx];
+  // 5. Render Bold Discrete Physical Brush Strokes
+  const handAngles = [0.45, 1.15, 2.10, 2.70];
+  for (let i = 0; i < strokes.length; i++) {
+    const st = strokes[i];
+    const sx = st.x;
+    const sy = st.y;
+    const r = st.r;
+    const idx = sy * width + sx;
 
-      // Pigment nuance inside the paint stroke
-      const pigmentDelta = (stroke * 5.2 + bristle * 3.2) * lumFactor * strength;
-      data[p] = Math.max(0, Math.min(255, data[p] + pigmentDelta));
-      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + pigmentDelta));
-      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + pigmentDelta));
+    const xx = sJxx[idx], yy = sJyy[idx], xy = sJxy[idx];
+    const coherence = Math.sqrt((xx - yy) * (xx - yy) + 4 * xy * xy) / (xx + yy + 1e-4);
 
-      // 3D Impasto height
-      H[idx] = (stroke * 2.4 + bristle * 1.1) * lumFactor * strength + canvasWeave;
+    let baseAngle;
+    if (coherence > 0.18) {
+      // High coherence: follow image structure! (vertical on buildings, horizontal on road, curved on cars)
+      baseAngle = 0.5 * Math.atan2(2 * xy, xx - yy) + 1.5708;
+    } else {
+      // Low coherence: natural hand sweep angles
+      baseAngle = handAngles[Math.floor(fastRand() * handAngles.length)];
+    }
+
+    const theta = baseAngle + (fastRand() - 0.5) * 0.3;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+
+    const hl = brushLen * 0.5 * (0.8 + fastRand() * 0.45);
+    const hw = brushRadius * (0.85 + fastRand() * 0.35);
+
+    const maxDim = Math.ceil(Math.sqrt(hl * hl + hw * hw));
+    const x0 = Math.max(0, sx - maxDim);
+    const x1 = Math.min(width - 1, sx + maxDim);
+    const y0 = Math.max(0, sy - maxDim);
+    const y1 = Math.min(height - 1, sy + maxDim);
+
+    const pSeed = idx * 4;
+    const lumBase = (0.299 * data[pSeed] + 0.587 * data[pSeed + 1] + 0.114 * data[pSeed + 2]) / 255.0;
+    const lumFactor = 0.40 + lumBase * 0.85;
+    const nuance = (fastRand() * 16.0 - 8.0) * lumFactor * strength;
+
+    for (let py = y0; py <= y1; py++) {
+      const rowOffset = py * width;
+      for (let px = x0; px <= x1; px++) {
+        const pIdx = rowOffset + px;
+        if (labels && labels[pIdx] !== r) continue;
+
+        const dx = px - sx;
+        const dy = py - sy;
+        const u = dx * cosT + dy * sinT;
+        const v = -dx * sinT + dy * cosT;
+
+        const normU = Math.abs(u) / hl;
+        const normV = Math.abs(v) / hw;
+
+        if (normU <= 1.0 && normV <= 1.0) {
+          const wu = Math.cos(normU * 1.5708);
+          const wv = Math.cos(normV * 1.5708);
+          const strokeMask = wu * wv;
+
+          // Fine bristle grooves along brush drag
+          const bristle = 0.55 * Math.sin(v * 2.2) + 0.35 * Math.sin(v * 1.4 + 1.1) + 0.20 * Math.sin(v * 0.8 + 2.0);
+
+          // Bold 3D impasto height
+          const strokeH = strokeMask * (2.2 + bristle * 1.2) * lumFactor * strength;
+          H[pIdx] = Math.max(H[pIdx], H[pIdx] * 0.25 + strokeH * 2.0);
+
+          // Bold pigment nuance inside stroke
+          const alpha = strokeMask * 0.50;
+          const deltaCol = nuance + bristle * 5.0 * lumFactor * strength;
+          const p = pIdx * 4;
+          data[p] = Math.max(0, Math.min(255, data[p] * (1.0 - alpha) + (data[p] + deltaCol) * alpha));
+          data[p + 1] = Math.max(0, Math.min(255, data[p + 1] * (1.0 - alpha) + (data[p + 1] + deltaCol) * alpha));
+          data[p + 2] = Math.max(0, Math.min(255, data[p + 2] * (1.0 - alpha) + (data[p + 2] + deltaCol) * alpha));
+        }
+      }
     }
   }
 
   // 6. Directional Satin Lighting (Amsterdam Standard Acrylics finish)
-  const scaleH = 0.38 * strength;
+  const scaleH = 0.48 * strength;
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
-
     for (let x = 1; x < width - 1; x++) {
       const idx = rowOffset + x;
       const p = idx * 4;
@@ -898,12 +926,12 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
       const nz = 1.0 * invN;
 
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.48) * 32.0 * strength;
+      const diffuse = (nDotL - 0.48) * 44.0 * strength;
 
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
-        spec = Math.pow(rz, 9) * 22.0 * strength;
+        spec = Math.pow(rz, 8) * 32.0 * strength;
       }
 
       data[p] = Math.max(0, Math.min(255, data[p] + diffuse + spec));
