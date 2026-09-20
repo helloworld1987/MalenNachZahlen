@@ -654,7 +654,7 @@ function renderPreview(ctx, highlightNum = null) {
   }
 }
 
-// Anti-alias pixel staircases so color fields look like painted brush strokes
+// Anti-alias pixel staircases symmetrically so color fields meet like wet acrylic paint
 function softenColorBoundaries(data, labels, width, height) {
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
@@ -662,80 +662,82 @@ function softenColorBoundaries(data, labels, width, height) {
       const idx = rowOffset + x;
       const curr = labels[idx];
 
-      // Check if pixel is on a color boundary
-      if (labels[idx + 1] !== curr || labels[idx + width] !== curr) {
-        const p = idx * 4;
-        const pR = (idx + 1) * 4;
-        const pB = (idx + width) * 4;
+      const rL = labels[idx - 1];
+      const rR = labels[idx + 1];
+      const rT = labels[idx - width];
+      const rB = labels[idx + width];
 
-        // Subtle 1-pixel blend along color boundary
-        data[p] = Math.round(data[p] * 0.70 + (data[pR] + data[pB]) * 0.15);
-        data[p + 1] = Math.round(data[p + 1] * 0.70 + (data[pR + 1] + data[pB + 1]) * 0.15);
-        data[p + 2] = Math.round(data[p + 2] * 0.70 + (data[pR + 2] + data[pB + 2]) * 0.15);
+      if (rL !== curr || rR !== curr || rT !== curr || rB !== curr) {
+        const p = idx * 4;
+        let sumR = data[p] * 2, sumG = data[p + 1] * 2, sumB = data[p + 2] * 2;
+        let count = 2;
+
+        if (rL !== curr) { const pN = (idx - 1) * 4; sumR += data[pN]; sumG += data[pN + 1]; sumB += data[pN + 2]; count++; }
+        if (rR !== curr) { const pN = (idx + 1) * 4; sumR += data[pN]; sumG += data[pN + 1]; sumB += data[pN + 2]; count++; }
+        if (rT !== curr) { const pN = (idx - width) * 4; sumR += data[pN]; sumG += data[pN + 1]; sumB += data[pN + 2]; count++; }
+        if (rB !== curr) { const pN = (idx + width) * 4; sumR += data[pN]; sumG += data[pN + 1]; sumB += data[pN + 2]; count++; }
+
+        data[p] = Math.round(sumR / count);
+        data[p + 1] = Math.round(sumG / count);
+        data[p + 2] = Math.round(sumB / count);
       }
     }
   }
 }
 
-// Organic Palette-Knife & Acrylic Impasto Relief Shader
+// Authentic Acrylic Brushstroke & Impasto Relief Shader
+// Replaces artificial square grid cells with continuous directional bristle sweeps, fine canvas weave, and satin sheen
 function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, strength = 1.0) {
   const total = width * height;
   const H = new Float32Array(total);
 
-  // Fast multi-scale noise grid for natural palette-knife strokes & swirls
-  const step = 14;
-  const gw = Math.ceil(width / step) + 2;
-  const gh = Math.ceil(height / step) + 2;
-  const noiseGrid = new Float32Array(gw * gh);
+  // Brush flow angle: sweeping ~23 degrees diagonal flow with gentle organic wave
+  const theta = 0.40;
+  const cosT = Math.cos(theta);
+  const sinT = Math.sin(theta);
 
-  for (let gy = 0; gy < gh; gy++) {
-    for (let gx = 0; gx < gw; gx++) {
-      // Deterministic pseudo-random seed
-      const n = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
-      noiseGrid[gy * gw + gx] = (n - Math.floor(n) - 0.5) * 8.0;
-    }
-  }
-
-  // 1. Build organic surface height map
+  // 1. Build continuous organic surface height map (ZERO square grid cells!)
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
-    const gy = Math.floor(y / step);
-    const ty = (y % step) / step;
-    const gRow0 = gy * gw;
-    const gRow1 = (gy + 1) * gw;
+    const yCos = y * cosT;
+    const ySin = y * sinT;
 
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
-      const gx = Math.floor(x / step);
-      const tx = (x % step) / step;
 
-      // Bilinear interpolation of broad paint strokes
-      const g00 = noiseGrid[gRow0 + gx];
-      const g10 = noiseGrid[gRow0 + gx + 1];
-      const g01 = noiseGrid[gRow1 + gx];
-      const g11 = noiseGrid[gRow1 + gx + 1];
+      // Coordinate along stroke (u) and across stroke (v)
+      const u = x * cosT + ySin;
+      const v = -x * sinT + yCos;
 
-      const broadStroke = (g00 * (1 - tx) + g10 * tx) * (1 - ty) + (g01 * (1 - tx) + g11 * tx) * ty;
+      // 1. Broad undulating palette-knife facets (long, continuous sweeps)
+      const knifeFacet = Math.cos(u * 0.022 + Math.sin(v * 0.035)) * 2.2;
 
-      // Micro linen canvas weave (ultra-fine, no stripes)
-      const weave = ((x % 2 === 0 ? 1 : -1) + (y % 2 === 0 ? 1 : -1)) * 0.7;
+      // 2. Parallel brush bristles (hair lines flowing along the brush stroke)
+      const bristle1 = Math.sin(v * 0.72 + Math.sin(u * 0.016) * 1.1) * 1.3;
+      const bristle2 = Math.sin(v * 1.5 + 1.2) * 0.6;
+      const bristle3 = Math.sin(v * 2.9) * 0.25;
 
-      // Thick paint edge lip (impasto accumulation where brush stops)
-      const isEdge = boundaries && boundaries[idx] === 1 ? 4.5 : 0;
+      // 3. Fine interwoven linen canvas weave (microscopic fabric grain)
+      const canvasWeave = (Math.sin(x * 0.72) * Math.cos(y * 0.72)) * 0.45;
 
-      H[idx] = broadStroke + weave + isEdge;
+      // 4. Soft acrylic paint edge lip (accumulation where brush stroke stops)
+      const edgeLip = boundaries && boundaries[idx] === 1 ? 3.2 : 0;
+
+      H[idx] = knifeFacet + bristle1 + bristle2 + bristle3 + canvasWeave + edgeLip;
     }
   }
 
-  // 2. 3D Directional Lighting (Sun from top-left, 45 degrees)
+  // 2. 3D Directional Lighting (Natural sun from top-left, 45 degrees)
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
 
-  const scaleH = 0.40 * strength;
+  const scaleH = 0.36 * strength;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
+    const yCos = y * cosT;
+
     for (let x = 1; x < width - 1; x++) {
       const idx = rowOffset + x;
       const p = idx * 4;
@@ -748,27 +750,28 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
       const ny = -dhdy * invN;
       const nz = 1.0 * invN;
 
-      // Diffuse relief
+      // Diffuse light (soft tactile 3D relief)
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.50) * 44 * strength;
+      const diffuse = (nDotL - 0.50) * 38 * strength;
 
       // Specular sheen for glossy acrylic paint
       let spec = 0;
       if (nDotL > 0) {
-        const rx = 2 * nDotL * nx - nLx;
-        const ry = 2 * nDotL * ny - nLy;
-        const rz = 2 * nDotL * nz - nLz;
-        const rDotV = Math.max(0, rz);
-        spec = Math.pow(rDotV, 8) * 32 * strength;
+        const rz = Math.max(0, 2 * nDotL * nz - nLz);
+        spec = Math.pow(rz, 10) * 26 * strength;
       }
 
       const r = data[p], g = data[p + 1], b = data[p + 2];
-      const isDark = (r + g + b) < 200;
-      const gloss = isDark ? spec * 1.1 : spec * 0.3;
+      const isDark = (r + g + b) < 190;
+      const gloss = isDark ? spec * 1.05 : spec * 0.28;
 
-      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss));
-      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss));
-      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss));
+      // Subtle bristle pigment opacity nuance (natural paint streakiness along the stroke)
+      const v = -x * sinT + yCos;
+      const bristleTint = Math.sin(v * 0.72) * 2.8 * strength;
+
+      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss + bristleTint));
+      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss + bristleTint));
+      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss + bristleTint));
     }
   }
 }
