@@ -2000,61 +2000,76 @@ function segmentAndCleanIslands(pixelClusters, width, height, palette, minRegion
   };
 }
 
-// Mode/Majority filter: rounds jagged pixel staircases and eliminates razor-thin slivers
-function smoothLabelField(labels, width, height, passes = 2) {
+// Enhanced 5x5 Majority & Sliver Elimination Filter:
+// Rounds jagged pixel staircases, dissolves 1-px & 2-px narrow slivers, and creates calm organic fields
+function smoothLabelField5x5(labels, width, height, passes = 1) {
   let current = labels;
+  const localArr = new Int32Array(25);
 
   for (let p = 0; p < passes; p++) {
     const next = new Uint32Array(width * height);
 
-    for (let y = 1; y < height - 1; y++) {
-      const rowOffset = y * width;
-      for (let x = 1; x < width - 1; x++) {
-        const idx = rowOffset + x;
+    for (let y = 2; y < height - 2; y++) {
+      const row = y * width;
+      for (let x = 2; x < width - 2; x++) {
+        const idx = row + x;
         const curr = current[idx];
 
-        // 3x3 neighborhood
-        const n0 = current[idx - width - 1], n1 = current[idx - width], n2 = current[idx - width + 1];
-        const n3 = current[idx - 1],         n4 = curr,                 n5 = current[idx + 1];
-        const n6 = current[idx + width - 1], n7 = current[idx + width], n8 = current[idx + width + 1];
+        // Fast skip for uniform interiors: check 8 perimeter test points
+        if (current[(y - 2) * width + (x - 2)] === curr &&
+            current[(y - 2) * width + (x + 2)] === curr &&
+            current[(y + 2) * width + (x - 2)] === curr &&
+            current[(y + 2) * width + (x + 2)] === curr &&
+            current[(y - 2) * width + x] === curr &&
+            current[(y + 2) * width + x] === curr &&
+            current[row + (x - 2)] === curr &&
+            current[row + (x + 2)] === curr) {
+          next[idx] = curr;
+          continue;
+        }
 
-        const arr = [n0, n1, n2, n3, n4, n5, n6, n7, n8];
-        let bestLabel = curr;
-        let maxCount = 0;
-
-        for (let i = 0; i < 9; i++) {
-          let count = 1;
-          for (let j = i + 1; j < 9; j++) {
-            if (arr[i] === arr[j]) count++;
-          }
-          if (count > maxCount) {
-            maxCount = count;
-            bestLabel = arr[i];
+        let pt = 0;
+        for (let dy = -2; dy <= 2; dy++) {
+          const nyRow = (y + dy) * width;
+          for (let dx = -2; dx <= 2; dx++) {
+            localArr[pt++] = current[nyRow + x + dx];
           }
         }
 
-        // If a label holds dominance in 3x3 (>= 5 out of 9), adopt it to round the corner
-        next[idx] = maxCount >= 5 ? bestLabel : curr;
+        // Find dominant label in 5x5 window (25 pixels)
+        let best = curr, maxC = 0;
+        for (let i = 0; i < 25; i++) {
+          let c = 1;
+          const val = localArr[i];
+          for (let j = i + 1; j < 25; j++) {
+            if (localArr[j] === val) c++;
+          }
+          if (c > maxC) {
+            maxC = c;
+            best = val;
+          }
+        }
+
+        next[idx] = maxC >= 13 ? best : curr;
       }
     }
 
-    // Border rows
-    for (let x = 0; x < width; x++) {
-      next[x] = current[x];
-      next[(height - 1) * width + x] = current[(height - 1) * width + x];
-    }
+    // Border rows preservation
     for (let y = 0; y < height; y++) {
-      next[y * width] = current[y * width];
-      next[y * width + width - 1] = current[y * width + width - 1];
+      for (let x = 0; x < 2; x++) next[y * width + x] = current[y * width + x];
+      for (let x = width - 2; x < width; x++) next[y * width + x] = current[y * width + x];
+    }
+    for (let x = 0; x < width; x++) {
+      for (let y = 0; y < 2; y++) next[y * width + x] = current[y * width + x];
+      for (let y = height - 2; y < height; y++) next[y * width + x] = current[y * width + x];
     }
 
     current = next;
   }
-
   return current;
 }
 
-// --- Boundary Detection ---
+// Fast raster boundary detection for impasto texture shader
 function extractBoundaries(labels, width, height) {
   const numPixels = width * height;
   const boundaries = new Uint8Array(numPixels);
@@ -2068,13 +2083,183 @@ function extractBoundaries(labels, width, height) {
       let isBoundary = false;
       if (x < width - 1 && labels[idx + 1] !== curr) isBoundary = true;
       else if (y < height - 1 && labels[idx + width] !== curr) isBoundary = true;
-      else if (x > 0 && labels[idx - 1] !== curr) isBoundary = true;
-      else if (y > 0 && labels[idx - width] !== curr) isBoundary = true;
 
       if (isBoundary) boundaries[idx] = 1;
     }
   }
   return boundaries;
+}
+
+// High-Precision Vector Boundary Extractor:
+// Traces grid segment topology, simplifies with Douglas-Peucker (RDP), and rounds corners with Chaikin
+function extractVectorPolylines(labels, width, height, epsilon = 0.9) {
+  const vw = width + 1;
+  const totalV = (width + 1) * (height + 1);
+  const head = new Int32Array(totalV).fill(-1);
+  const maxEdges = (width * height * 2) * 2;
+  const to = new Int32Array(maxEdges);
+  const nxt = new Int32Array(maxEdges);
+  let edgeCount = 0;
+
+  function addHalfEdge(u, v) {
+    to[edgeCount] = v;
+    nxt[edgeCount] = head[u];
+    head[u] = edgeCount++;
+  }
+
+  const deg = new Uint8Array(totalV);
+
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const c = labels[row + x];
+      if (x < width - 1 && labels[row + x + 1] !== c) {
+        const v0 = y * vw + (x + 1);
+        const v1 = (y + 1) * vw + (x + 1);
+        addHalfEdge(v0, v1);
+        addHalfEdge(v1, v0);
+        deg[v0]++;
+        deg[v1]++;
+      }
+      if (y < height - 1 && labels[row + width + x] !== c) {
+        const v0 = (y + 1) * vw + x;
+        const v1 = (y + 1) * vw + (x + 1);
+        addHalfEdge(v0, v1);
+        addHalfEdge(v1, v0);
+        deg[v0]++;
+        deg[v1]++;
+      }
+    }
+  }
+
+  const visitedEdge = new Uint8Array(edgeCount);
+  const polylines = [];
+
+  function tracePath(startV, initialEdge) {
+    const pts = [startV];
+    let currV = to[initialEdge];
+    visitedEdge[initialEdge] = 1;
+    visitedEdge[initialEdge ^ 1] = 1;
+    pts.push(currV);
+
+    while (deg[currV] === 2) {
+      let foundNext = false;
+      for (let e = head[currV]; e !== -1; e = nxt[e]) {
+        if (!visitedEdge[e]) {
+          visitedEdge[e] = 1;
+          visitedEdge[e ^ 1] = 1;
+          currV = to[e];
+          pts.push(currV);
+          foundNext = true;
+          break;
+        }
+      }
+      if (!foundNext) break;
+      if (currV === startV) break;
+    }
+    return pts;
+  }
+
+  // Pass 1: Trace starting from junctions (degree != 2)
+  for (let v = 0; v < totalV; v++) {
+    if (deg[v] > 0 && deg[v] !== 2) {
+      for (let e = head[v]; e !== -1; e = nxt[e]) {
+        if (!visitedEdge[e]) {
+          polylines.push(tracePath(v, e));
+        }
+      }
+    }
+  }
+
+  // Pass 2: Trace remaining closed loops (degree == 2)
+  for (let v = 0; v < totalV; v++) {
+    if (deg[v] === 2) {
+      for (let e = head[v]; e !== -1; e = nxt[e]) {
+        if (!visitedEdge[e]) {
+          polylines.push(tracePath(v, e));
+        }
+      }
+    }
+  }
+
+  // Ramer-Douglas-Peucker simplification
+  function rdpPoints(pts, eps) {
+    if (pts.length <= 2) return pts;
+    let dmax = 0, index = 0;
+    const p1 = pts[0], p2 = pts[pts.length - 1];
+    const dx = p2.x - p1.x, dy = p2.y - p1.y;
+    const lenSq = dx * dx + dy * dy;
+
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p = pts[i];
+      let d;
+      if (lenSq === 0) {
+        d = Math.hypot(p.x - p1.x, p.y - p1.y);
+      } else {
+        const t = Math.max(0, Math.min(1, ((p.x - p1.x) * dx + (p.y - p1.y) * dy) / lenSq));
+        d = Math.hypot(p.x - (p1.x + t * dx), p.y - (p1.y + t * dy));
+      }
+      if (d > dmax) { index = i; dmax = d; }
+    }
+
+    if (dmax > eps) {
+      const r1 = rdpPoints(pts.slice(0, index + 1), eps);
+      const r2 = rdpPoints(pts.slice(index), eps);
+      return r1.slice(0, -1).concat(r2);
+    }
+    return [p1, p2];
+  }
+
+  // Chaikin corner smoothing (1 pass)
+  function chaikinSmooth(pts) {
+    if (pts.length <= 2) return pts;
+    const isClosed = pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y;
+    const out = [];
+    if (!isClosed) out.push(pts[0]);
+
+    for (let i = 0; i < pts.length - 1; i++) {
+      const p0 = pts[i], p1 = pts[i + 1];
+      out.push({
+        x: 0.75 * p0.x + 0.25 * p1.x,
+        y: 0.75 * p0.y + 0.25 * p1.y
+      });
+      out.push({
+        x: 0.25 * p0.x + 0.75 * p1.x,
+        y: 0.25 * p0.y + 0.75 * p1.y
+      });
+    }
+
+    if (!isClosed) out.push(pts[pts.length - 1]);
+    else out.push(out[0]);
+    return out;
+  }
+
+  // Simplify & pack into a flat Float32Array: [len, x0, y0, x1, y1, ...]
+  let totalFloats = 0;
+  const processedPolys = [];
+
+  for (let i = 0; i < polylines.length; i++) {
+    const raw = polylines[i];
+    if (raw.length < 2) continue;
+    const xy = raw.map(v => ({ x: v % vw, y: Math.floor(v / vw) }));
+    const simplified = rdpPoints(xy, epsilon);
+    const smoothed = simplified.length >= 3 ? chaikinSmooth(simplified) : simplified;
+    processedPolys.push(smoothed);
+    totalFloats += 1 + smoothed.length * 2;
+  }
+
+  const flat = new Float32Array(totalFloats);
+  let ptr = 0;
+  for (let i = 0; i < processedPolys.length; i++) {
+    const poly = processedPolys[i];
+    flat[ptr++] = poly.length;
+    for (let j = 0; j < poly.length; j++) {
+      flat[ptr++] = poly[j].x;
+      flat[ptr++] = poly[j].y;
+    }
+  }
+
+  return flat;
 }
 
 // --- Polylabel / Pole of Inaccessibility (Optimal Number Center) ---
@@ -2089,10 +2274,12 @@ function computeRegionCenters(labels, width, height, numRegions) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
       const reg = labels[rowOffset + x];
-      if (x < minX[reg]) minX[reg] = x;
-      if (x > maxX[reg]) maxX[reg] = x;
-      if (y < minY[reg]) minY[reg] = y;
-      if (y > maxY[reg]) maxY[reg] = y;
+      if (reg < numRegions) {
+        if (x < minX[reg]) minX[reg] = x;
+        if (x > maxX[reg]) maxX[reg] = x;
+        if (y < minY[reg]) minY[reg] = y;
+        if (y > maxY[reg]) maxY[reg] = y;
+      }
     }
   }
 
@@ -2101,10 +2288,15 @@ function computeRegionCenters(labels, width, height, numRegions) {
   for (let r = 0; r < numRegions; r++) {
     const bx0 = minX[r], bx1 = maxX[r];
     const by0 = minY[r], by1 = maxY[r];
+
+    if (bx1 < bx0 || by1 < by0) {
+      centers.push({ x: 0, y: 0, radius: 0 });
+      continue;
+    }
+
     const bw = bx1 - bx0 + 1;
     const bh = by1 - by0 + 1;
 
-    // Small or narrow bounding boxes: sample fast
     let bestX = Math.floor((bx0 + bx1) / 2);
     let bestY = Math.floor((by0 + by1) / 2);
     let bestRadius = 0;
@@ -2117,7 +2309,6 @@ function computeRegionCenters(labels, width, height, numRegions) {
         const pIdx = py * width + px;
         if (labels[pIdx] !== r) continue;
 
-        // Compute distance to nearest non-r boundary pixel
         let minDist = Math.min(px - bx0, bx1 - px, py - by0, by1 - py) + 1;
         const searchDist = Math.min(minDist, 40);
 
@@ -2181,12 +2372,13 @@ self.onmessage = function (e) {
         config.minRegionSize ?? 80
       );
 
-      // Smooth contours to eliminate jagged pixel steps and wobbly worm edges
-      const smoothedLabels = smoothLabelField(labels, width, height, 2);
+      // Smooth contours with 5x5 majority filter: eliminates 1-px/2-px slivers & sharp staircases
+      const smoothedLabels = smoothLabelField5x5(labels, width, height, 1);
 
-      // 4. Outlines Extraction (clean, flowing curves)
-      self.postMessage({ type: 'progress', step: 4, total: 6, msg: 'Fließende Konturlinien berechnen...' });
+      // 4. Outlines Extraction (clean, flowing vector curves & raster boundaries)
+      self.postMessage({ type: 'progress', step: 4, total: 6, msg: 'Fließende Vektor-Konturen berechnen...' });
       const boundaries = extractBoundaries(smoothedLabels, width, height);
+      const polylines = extractVectorPolylines(smoothedLabels, width, height, 0.9);
 
       // 5. Smart Number Placement (Pole of Inaccessibility)
       self.postMessage({ type: 'progress', step: 5, total: 6, msg: 'Zahlenpositionen optimal platzieren (Polylabel)...' });
@@ -2195,14 +2387,24 @@ self.onmessage = function (e) {
       // 6. Build Final Legend & Compact Palette
       self.postMessage({ type: 'progress', step: 6, total: 6, msg: 'Farblegende und Vorlage zusammenstellen...' });
 
+      // Count actual pixels per region in the smoothed field
+      const finalRegionPixelCounts = new Uint32Array(numRegions);
+      for (let i = 0; i < totalPixels; i++) {
+        const r = smoothedLabels[i];
+        if (r < numRegions) finalRegionPixelCounts[r]++;
+      }
+
       // Count usage of each palette color in the final cleaned image
       const paletteUsage = new Uint32Array(mappedPalette.length);
       const paletteRegions = Array.from({ length: mappedPalette.length }, () => 0);
 
       for (let r = 0; r < numRegions; r++) {
-        const cIdx = regionColors[r];
-        paletteUsage[cIdx] += regionPixelCounts[r];
-        paletteRegions[cIdx]++;
+        const count = finalRegionPixelCounts[r];
+        if (count > 0) {
+          const cIdx = regionColors[r];
+          paletteUsage[cIdx] += count;
+          paletteRegions[cIdx]++;
+        }
       }
 
       // Filter out unused palette colors and renumber 1...K
@@ -2229,17 +2431,20 @@ self.onmessage = function (e) {
       // Prepare regions metadata for client rendering
       const regions = [];
       for (let r = 0; r < numRegions; r++) {
-        const cIdx = regionColors[r];
-        const num = colorRemap.get(cIdx);
-        regions.push({
-          id: r,
-          number: num,
-          colorIdx: cIdx,
-          x: centers[r].x,
-          y: centers[r].y,
-          radius: centers[r].radius,
-          area: regionPixelCounts[r]
-        });
+        const count = finalRegionPixelCounts[r];
+        if (count > 0) {
+          const cIdx = regionColors[r];
+          const num = colorRemap.get(cIdx);
+          regions.push({
+            id: r,
+            number: num,
+            colorIdx: cIdx,
+            x: centers[r].x,
+            y: centers[r].y,
+            radius: centers[r].radius,
+            area: count
+          });
+        }
       }
 
       self.postMessage({
@@ -2249,10 +2454,11 @@ self.onmessage = function (e) {
           height,
           labels: smoothedLabels,
           boundaries,
+          polylines,
           palette: activeColors,
           regions
         }
-      }, [smoothedLabels.buffer, boundaries.buffer]);
+      }, [smoothedLabels.buffer, boundaries.buffer, polylines.buffer]);
 
     } catch (err) {
       self.postMessage({ type: 'error', error: err.message, stack: err.stack });

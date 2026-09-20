@@ -85,31 +85,31 @@ let uncroppedImage = null;
 let isCropped = false;
 const btnCrop = document.getElementById('btnCrop');
 
-// Presets
+// Presets (Balanced for real-world acrylic painting)
 const PRESETS = {
   street: {
     colors: 24, minRegion: 450, smooth: true,
     gamma: 0.95, contrast: 1.10, saturation: 1.25, lineWidth: 1.0
   },
   portrait: {
-    colors: 24, minRegion: 120, smooth: true,
+    colors: 22, minRegion: 200, smooth: true,
     gamma: 0.90, contrast: 1.05, saturation: 1.08, lineWidth: 1.0
   },
   landscape: {
-    colors: 28, minRegion: 160, smooth: true,
+    colors: 26, minRegion: 280, smooth: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.05, lineWidth: 1.0
   },
   popart: {
-    colors: 16, minRegion: 200, smooth: false,
+    colors: 14, minRegion: 320, smooth: true,
     gamma: 0.85, contrast: 1.25, saturation: 1.30, lineWidth: 1.5
   },
   beginner: {
-    colors: 14, minRegion: 350, smooth: true,
+    colors: 14, minRegion: 500, smooth: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.00, lineWidth: 1.2
   },
   detailed: {
-    colors: 36, minRegion: 60, smooth: false,
-    gamma: 1.00, contrast: 1.00, saturation: 1.05, lineWidth: 1.0
+    colors: 30, minRegion: 200, smooth: true,
+    gamma: 1.00, contrast: 1.05, saturation: 1.05, lineWidth: 1.0
   }
 };
 
@@ -466,57 +466,77 @@ function renderCurrentView() {
 }
 
 function renderTemplate(ctx, highlightNum = null) {
-  const { width, height, boundaries, regions, palette } = processedData;
-  const lineWidth = parseFloat(sliderLineWidth.value);
+  const { width, height, polylines, boundaries, regions, palette } = processedData;
+  const lineWidth = parseFloat(sliderLineWidth.value) || 1.0;
   const numScale = parseInt(sliderNumberScale.value, 10) / 100.0;
 
   // 1. Fill background white
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, width, height);
 
-  // 2. If a color is highlighted, paint its regions in light accent
+  // 2. If a color is highlighted, paint its regions in gentle accent
   if (highlightNum !== null) {
     const colObj = palette.find(p => p.number === highlightNum);
-    const hex = colObj ? colObj.hex : '#fef08a';
-
-    // Highlight fill
-    ctx.fillStyle = hex + '55'; // translucent
+    const rgb = colObj ? colObj.rgb : [254, 240, 138];
     const labels = processedData.labels;
-    // Fast pixel fill for highlighted regions
     const imgData = ctx.getImageData(0, 0, width, height);
     const d = imgData.data;
-
-    const rgb = colObj ? colObj.rgb : [254, 240, 138];
 
     for (let i = 0; i < labels.length; i++) {
       const reg = regions[labels[i]];
       if (reg && reg.number === highlightNum) {
         const p = i * 4;
-        d[p] = Math.round(d[p] * 0.4 + rgb[0] * 0.6);
-        d[p + 1] = Math.round(d[p + 1] * 0.4 + rgb[1] * 0.6);
-        d[p + 2] = Math.round(d[p + 2] * 0.4 + rgb[2] * 0.6);
+        d[p] = Math.round(255 * 0.35 + rgb[0] * 0.65);
+        d[p + 1] = Math.round(255 * 0.35 + rgb[1] * 0.65);
+        d[p + 2] = Math.round(255 * 0.35 + rgb[2] * 0.65);
       }
     }
     ctx.putImageData(imgData, 0, 0);
   }
 
-  // 3. Draw Clean Boundaries (Charcoal Fineliner Look)
-  const imgData = ctx.getImageData(0, 0, width, height);
-  const d = imgData.data;
-  const boundaryColor = [45, 52, 64]; // Clean deep charcoal
-
-  for (let i = 0; i < boundaries.length; i++) {
-    if (boundaries[i] === 1) {
-      const p = i * 4;
-      d[p] = boundaryColor[0];
-      d[p + 1] = boundaryColor[1];
-      d[p + 2] = boundaryColor[2];
-      d[p + 3] = 255;
+  // 3. Draw Clean Anti-Aliased Vector Boundaries (Smooth Fineliner Look)
+  if (polylines && polylines.length > 0) {
+    ctx.save();
+    ctx.beginPath();
+    let offset = 0;
+    while (offset < polylines.length) {
+      const len = polylines[offset++];
+      if (len < 2) {
+        offset += len * 2;
+        continue;
+      }
+      const x0 = polylines[offset++];
+      const y0 = polylines[offset++];
+      ctx.moveTo(x0, y0);
+      for (let j = 1; j < len; j++) {
+        ctx.lineTo(polylines[offset++], polylines[offset++]);
+      }
     }
+    ctx.strokeStyle = '#334155'; // Slate charcoal fineliner
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+    ctx.restore();
+  } else if (boundaries) {
+    // Fallback raster boundaries if polylines unavailable
+    const imgData = ctx.getImageData(0, 0, width, height);
+    const d = imgData.data;
+    const boundaryColor = [51, 65, 85];
+    for (let i = 0; i < boundaries.length; i++) {
+      if (boundaries[i] === 1) {
+        const p = i * 4;
+        d[p] = boundaryColor[0];
+        d[p + 1] = boundaryColor[1];
+        d[p + 2] = boundaryColor[2];
+        d[p + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
   }
-  ctx.putImageData(imgData, 0, 0);
 
-  // 4. Draw Numbers at Polylabel Centers (strictly inside regions without crossing borders)
+  // 4. Draw Numbers at Polylabel Centers with Crisp White Halo (Never cut by lines)
+  ctx.save();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -524,7 +544,7 @@ function renderTemplate(ctx, highlightNum = null) {
     const reg = regions[i];
     const s = String(reg.number);
 
-    // Enforce sufficient clearance: single digits need radius >= 4px, double digits need >= 6px
+    // Enforce strict clearance: single digits radius >= 4px, double digits >= 6px
     const minR = s.length > 1 ? 6.0 : 4.0;
     if (reg.radius < minR) continue;
 
@@ -532,22 +552,30 @@ function renderTemplate(ctx, highlightNum = null) {
     const baseFontSize = Math.max(8, Math.min(16, Math.round(reg.radius * 1.25)));
     const finalSize = Math.round(baseFontSize * numScale);
 
-    ctx.font = `600 ${finalSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+    ctx.font = `600 ${finalSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 
     if (isTarget) {
+      // Highlighted circle pin
       ctx.fillStyle = '#ef4444';
       ctx.beginPath();
-      ctx.arc(reg.x, reg.y, finalSize * 0.85, 0, Math.PI * 2);
+      ctx.arc(reg.x, reg.y, finalSize * 0.9, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#ffffff';
-    } else if (highlightNum !== null) {
-      ctx.fillStyle = '#94a3b8';
-    } else {
-      ctx.fillStyle = '#1e293b';
-    }
 
-    ctx.fillText(s, reg.x, reg.y + 0.5);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(s, reg.x, reg.y + 0.5);
+    } else {
+      // White protective halo around number so intersecting contour lines don't obscure the digits
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = Math.max(3, finalSize * 0.38);
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.strokeText(s, reg.x, reg.y + 0.5);
+
+      ctx.fillStyle = highlightNum !== null ? '#94a3b8' : '#1e293b';
+      ctx.fillText(s, reg.x, reg.y + 0.5);
+    }
   }
+  ctx.restore();
 }
 
 function renderPreview(ctx, highlightNum = null) {
@@ -998,28 +1026,44 @@ function exportPreviewPng() {
 
 function exportSvg() {
   if (!processedData) return;
-  const { width, height, boundaries, regions } = processedData;
+  const { width, height, polylines, regions } = processedData;
+  const lineWidth = parseFloat(sliderLineWidth.value) || 1.0;
 
-  let svg = `<?xml version="1.0" standalone="no"?>\n`;
+  let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
   svg += `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">\n`;
   svg += `  <rect width="100%" height="100%" fill="#ffffff" />\n`;
 
-  // Draw template canvas as background raster image or paths
-  const templateCanvas = document.createElement('canvas');
-  templateCanvas.width = width;
-  templateCanvas.height = height;
-  renderTemplate(templateCanvas.getContext('2d'), null);
+  // 1. True SVG Vector Paths for Boundaries
+  if (polylines && polylines.length > 0) {
+    let pathsD = '';
+    let offset = 0;
+    while (offset < polylines.length) {
+      const len = polylines[offset++];
+      if (len < 2) {
+        offset += len * 2;
+        continue;
+      }
+      const x0 = polylines[offset++];
+      const y0 = polylines[offset++];
+      pathsD += `M${x0.toFixed(1)} ${y0.toFixed(1)}`;
+      for (let j = 1; j < len; j++) {
+        pathsD += ` L${polylines[offset++].toFixed(1)} ${polylines[offset++].toFixed(1)}`;
+      }
+      pathsD += ' ';
+    }
+    svg += `  <path d="${pathsD}" stroke="#334155" stroke-width="${lineWidth}" fill="none" stroke-linecap="round" stroke-linejoin="round" />\n`;
+  }
 
-  const dataUrl = templateCanvas.toDataURL('image/png');
-  svg += `  <image href="${dataUrl}" width="${width}" height="${height}" />\n`;
-
-  // Overlay clean vector text for all numbers
-  svg += `  <g id="numbers" font-family="-apple-system, sans-serif" font-weight="600" text-anchor="middle" dominant-baseline="central" fill="#1e293b">\n`;
+  // 2. High-Legibility Numbers with Protective Stroke Halo
+  svg += `  <g id="numbers" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-weight="600" text-anchor="middle" dominant-baseline="central">\n`;
   for (let i = 0; i < regions.length; i++) {
     const reg = regions[i];
-    if (reg.radius >= 3) {
+    const isSingleDigit = reg.number < 10;
+    const minRadius = isSingleDigit ? 4.0 : 6.0;
+
+    if (reg.radius >= minRadius) {
       const fSize = Math.max(7, Math.min(18, Math.round(reg.radius * 1.35)));
-      svg += `    <text x="${reg.x}" y="${reg.y}" font-size="${fSize}">${reg.number}</text>\n`;
+      svg += `    <text x="${reg.x}" y="${reg.y}" font-size="${fSize}" paint-order="stroke fill" stroke="#ffffff" stroke-width="2.5" stroke-linejoin="round" fill="#1e293b">${reg.number}</text>\n`;
     }
   }
   svg += `  </g>\n`;
