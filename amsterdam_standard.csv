@@ -1,0 +1,103 @@
+name,code,r,g,b,hex
+Zinkwit,104,241,240,236,#f1f0ec
+Titaanwit,105,242,241,237,#f2f1ed
+Titaanbuff licht,289,233,226,213,#e9e2d5
+Titaanbuff donker,290,224,213,196,#e0d5c4
+Napelsgeel licht,222,238,228,198,#eee4c6
+Napelsgeel groen,282,217,215,174,#d9d7ae
+Napelsgeel donker,223,229,207,158,#e5cf9e
+Napelsgeel rood licht,292,227,201,163,#e3c9a3
+Napelsgeel Rood,224,223,185,143,#dfb98f
+Permanentcitroengeel licht,217,245,230,129,#f5e681
+Nikkeltitaangeel,274,244,223,85,#f4df55
+Groengeel,243,213,218,61,#d5da3d
+Azogeel Lemon,267,242,214,43,#f2d62b
+Primairgeel,275,246,204,36,#f6cc24
+Azogeel licht,268,250,204,38,#facc26
+Transparantgeel middel,272,240,188,41,#f0bc29
+Azogeel middel,269,234,180,44,#eab42c
+Azogeel donker,270,226,165,45,#e2a52d
+Goudgeel,253,219,152,53,#db9835
+Azo-oranje,276,221,131,55,#dd8337
+Vermiljoen,311,212,77,56,#d44d38
+Naftolrood licht,398,211,67,64,#d34340
+Naftolrood middel,396,205,58,62,#cd3a3e
+Transparantrood middel,317,191,60,66,#bf3c42
+Pyrrolerood,315,195,50,56,#c33238
+Naftolrood donker,399,183,48,61,#b7303d
+Karmijn,318,181,48,64,#b53040
+Primairmagenta,369,190,40,80,#be2850
+Permanentroodpurper,348,179,49,84,#b33154
+Quinacridonerose,366,199,67,119,#c74377
+Venetiaansrose,316,204,126,126,#cc7e7e
+Perzischrose,330,200,115,130,#c87382
+Lichtrose,361,216,134,155,#d8869b
+Quinacridonerose licht,385,212,112,149,#d47095
+Permanent roodviolet licht,577,200,82,130,#c85282
+Permanent roodviolet,567,174,67,120,#ae4378
+Caput mortuum violet,344,116,69,83,#744553
+Permanentblauwviolet,568,91,63,110,#5b3f6e
+Ultramarijnviolet,507,78,62,111,#4e3e6f
+Ultramarijnviolet licht,519,86,73,123,#56497b
+Lila,556,167,163,192,#a7a3c0
+Ultramarijn licht,505,102,122,179,#667ab3
+Grijsblauw,562,96,122,148,#607a94
+Ultramarijn,504,55,87,155,#37579b
+Kobaltblauw (ultram.),512,44,88,152,#2c5898
+Primaircyaan,572,0,118,168,#0076a8
+Phtaloblauw,570,0,81,134,#005186
+Mangaanblauw phtalo,582,0,108,143,#006c8f
+Koningsblauw,517,64,113,162,#4071a2
+Briljantblauw,564,33,125,176,#217db0
+Hemelsblauw licht,551,114,163,193,#72a3c1
+Pruisischblauw (phtalo),566,45,78,97,#2d4e61
+Groenblauw,557,0,107,116,#006b74
+Turkooisblauw,522,0,124,136,#007c88
+Turkooisgroen licht,660,97,167,155,#61a79b
+Turkooisgroen,661,0,129,127,#00817f
+Geelgroen licht,664,164,185,93,#a4b95d
+Geelgroen,617,151,175,75,#97af4b
+Briljantgroen,605,69,145,80,#459150
+Permanentgroen licht,618,51,132,82,#338452
+Paul veronesegroen,615,0,115,96,#007360
+Permanentgroen donker,619,0,92,75,#005c4b
+Phtalogroen,575,0,92,81,#005c51
+Olijfgroen licht,621,128,135,80,#808750
+Olijfgroen donker,622,91,100,66,#5b6442
+Sapgroen,623,82,97,56,#526138
+Gele oker,227,194,150,64,#c29640
+Goudoker,231,192,133,56,#c08538
+Sienna naturel,234,170,123,75,#aa7b4b
+Sienna gebrand,411,149,85,60,#95553c
+Omber naturel,408,108,93,71,#6c5d47
+Omber gebrand,409,94,77,64,#5e4d40
+Van dijckbruin,403,82,71,64,#524740
+Warmgrijs,718,174,165,156,#aea59c
+Blauwgrijs licht,750,147,152,158,#93989e
+Neutraalgrijs,710,129,131,132,#818384
+Paynesgrijs,708,65,73,80,#414950
+Lampzwart,702,57,57,57,#393939
+Oxydzwart,735,58,57,57,#3a3939
+Zilver,800,171,170,168,#abaaa8
+Lichtgoud,802,190,161,109,#bea16d
+Donkergoud,803,167,126,77,#a77e4d
+Koper,805,161,110,81,#a16e51
+Brons,811,153,124,97,#997c61
+Tin,815,138,136,134,#8a8886
+Grafiet,840,112,111,111,#706f6f
+Metallic geel,831,199,180,83,#c7b453
+Metallic rood,832,179,63,66,#b33f42
+Metallic violet,835,125,86,124,#7d567c
+Metallic blauw,834,82,111,147,#526f93
+Metallic groen,836,63,127,107,#3f7f6b
+Metallic zwart,850,73,74,74,#494a4a
+Parel wit,817,220,215,207,#dcd7cf
+Parel geel,818,216,204,161,#d8cca1
+Parel rood,819,195,154,160,#c39aa0
+Parel blauw,820,136,157,185,#889db9
+Parel violet,821,163,152,178,#a398b2
+Parel groen,822,165,181,168,#a5b5a8
+Reflex geel,256,227,224,46,#e3e02e
+Reflex oranje,257,240,90,50,#f05a32
+Reflex rose,384,234,55,100,#ea3764
+Reflex groen,672,157,207,64,#9dcf40

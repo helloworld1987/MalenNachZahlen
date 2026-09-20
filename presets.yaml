@@ -1,0 +1,99 @@
+sea-portrait:
+  colors: 28
+  width: 2400
+  height: 1600
+  font_size: 9
+  force_unique: false
+  boundary_color: [60, 60, 60]
+  boundary_alpha: 120
+  line_thickness: 1
+  preprocess:
+    autocontrast: true
+    gamma: 1.0
+    colorboost: 1.05
+    bilateral: false
+  detail:
+    min_region: 80
+    thicken_lines: false
+    merge_close: false
+    close_thresh: 20.0
+
+portrait:
+  colors: 24
+  width: 2000
+  height: 1334
+  font_size: 10
+  force_unique: false
+  boundary_color: [60, 60, 60]
+  boundary_alpha: 130
+  line_thickness: 1
+  preprocess:
+    autocontrast: true
+    gamma: 0.90
+    colorboost: 1.08
+    bilateral: true
+  detail:
+    min_region: 90
+    thicken_lines: false
+    merge_close: false
+    close_thresh: 18.0
+
+landscape-sky:
+  colors: 26
+  width: 2400
+  height: 1600
+  font_size: 9
+  force_unique: false
+  boundary_color: [70, 70, 70]
+  boundary_alpha: 120
+  line_thickness: 1
+  preprocess:
+    autocontrast: true
+    gamma: 0.95
+    colorboost: 1.03
+    bilateral: true
+  detail:
+    min_region: 120
+    thicken_lines: false
+    merge_close: false
+    close_thresh: 20.0
+
+high-contrast:
+  colors: 18
+  width: 2000
+  height: 1334
+  font_size: 9
+  force_unique: false
+  boundary_color: [40, 40, 40]
+  boundary_alpha: 160
+  line_thickness: 2
+  preprocess:
+    autocontrast: true
+    gamma: 0.85
+    colorboost: 1.10
+    bilateral: false
+  detail:
+    min_region: 140
+    thicken_lines: true
+    merge_close: true
+    close_thresh: 16.0
+
+draft-fast:
+  colors: 16
+  width: 1600
+  height: 1066
+  font_size: 8
+  force_unique: false
+  boundary_color: [70, 70, 70]
+  boundary_alpha: 150
+  line_thickness: 1
+  preprocess:
+    autocontrast: true
+    gamma: 1.00
+    colorboost: 1.00
+    bilateral: false
+  detail:
+    min_region: 120
+    thicken_lines: false
+    merge_close: false
+    close_thresh: 18.0

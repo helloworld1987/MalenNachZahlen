@@ -1,0 +1,9 @@
+{
+  "name": "malen-nach-zahlen-web",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Malen nach Zahlen Web App",
+  "scripts": {
+    "start": "python3 -m http.server 8080 --directory ."
+  }
+}

@@ -12,6 +12,26 @@ Ideal für eigene Mal-Leinwände mit Amsterdam Acrylfarben.
 
 ---
 
+## 🌐 Interaktive Browser-App (Neu!)
+
+Neu: Eine moderne, interaktive Browser-App mit Null-Konfiguration:
+
+```bash
+./start.sh
+# Alternativ: python3 -m http.server 8080 --directory web
+```
+Öffne [http://localhost:8080](http://localhost:8080) im Browser.
+
+- **100% Client-Side:** Läuft komplett im Browser via Web Worker (Bilder verlassen nie deinen Rechner).
+- **CIELAB K-Means Clustering:** Lebendige, wahrnehmungsgetreue Farben mit Amsterdam Acryl-Zuordnung.
+- **5×5 2-Pass Bilateral-Filter & Multi-Pass Island-Cleaner:** Glättet raue Texturen (Asphalt, Putz, etc.) sauber glatt.
+- **Polylabel-Algorithmus:** Exakte Zahlenplatzierung im Flächeninneren (keine Zahlen auf Kanten).
+- **Interaktiver Malmodus:** Klick auf eine Farbe hebt alle entsprechenden Felder auf der Leinwand hervor.
+- **1-Klick-Zuschnitt:** Fokussiert das Bild direkt auf das Hauptmotiv.
+- **Export:** 3-seitige Druck-PDF (A4, A3, 60×40 cm), Vektor-SVG und PNG.
+
+---
+
 ## ✨ Features
 
 - **Vollständige Amsterdam Standard Series Palette** (alle Farben mit RGB)  

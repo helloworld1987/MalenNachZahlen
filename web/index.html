@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Malen nach Zahlen Studio</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/jspdf.umd.min.js"></script>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-icon">🎨</span>
+        <div>
+          <h1>Malen nach Zahlen Studio</h1>
+          <span class="subtext">Amsterdam Standard Series Acrylfarben • CIELAB Vektor-Engine</span>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <label class="btn btn-secondary file-upload-label" title="Eigenes Bild hochladen">
+          📁 Bild laden
+          <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp" style="display:none;">
+        </label>
+        <button id="btnSample" class="btn btn-secondary" title="Beispielbild zum Testen laden">
+          🌅 Beispielbild
+        </button>
+        <button id="btnCrop" class="btn btn-secondary" title="Bildausschnitt / Fokus wählen">
+          ✂️ Zuschneiden
+        </button>
+        <button id="btnProcess" class="btn btn-primary" title="Malvorlage mit aktuellen Einstellungen neu generieren">
+          ✨ Neu berechnen
+        </button>
+        
+        <div class="dropdown">
+          <button class="btn btn-accent" id="btnExportMenu">
+            💾 Exportieren ▾
+          </button>
+          <div class="dropdown-content" id="exportDropdown">
+            <button id="btnExportPdf">📄 Druck-PDF (3 Seiten)</button>
+            <button id="btnExportSvg">📐 Vektor SVG (Scharf)</button>
+            <button id="btnExportPng">🖼️ Vorlage als PNG</button>
+            <button id="btnExportPreviewPng">🎨 Farbvorschau als PNG</button>
+            <button id="btnPrint">🖨️ Drucken</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+      <!-- Left Sidebar: Controls -->
+      <aside class="sidebar-left">
+        <div class="panel-section">
+          <h3>⚡ Presets</h3>
+          <div class="preset-grid">
+            <button class="preset-btn" data-preset="street">
+              <strong>Straße & Stadt</strong>
+              <small>24 Farben • Glatter Asphalt</small>
+            </button>
+            <button class="preset-btn active" data-preset="portrait">
+              <strong>Portrait</strong>
+              <small>24 Farben • Weiche Hauttöne</small>
+            </button>
+            <button class="preset-btn" data-preset="landscape">
+              <strong>Landschaft</strong>
+              <small>28 Farben • Ruhiger Himmel</small>
+            </button>
+            <button class="preset-btn" data-preset="popart">
+              <strong>Pop-Art</strong>
+              <small>16 Farben • Kräftig & Kanten</small>
+            </button>
+            <button class="preset-btn" data-preset="beginner">
+              <strong>Anfänger</strong>
+              <small>14 Farben • Sehr große Flächen</small>
+            </button>
+            <button class="preset-btn" data-preset="detailed">
+              <strong>Detailreich</strong>
+              <small>36 Farben • Feine Nuancen</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h3>🎨 Mal-Parameter</h3>
+          
+          <div class="control-group">
+            <div class="label-row">
+              <label for="sliderColors">Anzahl Farben:</label>
+              <span id="valColors" class="val-badge">24</span>
+            </div>
+            <input type="range" id="sliderColors" min="8" max="44" step="2" value="24">
+          </div>
+
+          <div class="control-group">
+            <div class="label-row">
+              <label for="sliderMinRegion">Min. Flächengröße:</label>
+              <span id="valMinRegion" class="val-badge">250 px</span>
+            </div>
+            <input type="range" id="sliderMinRegion" min="20" max="1200" step="20" value="250">
+            <small class="hint">Glättet kleinteiliges Rauschen (z. B. auf Asphalt und Pflaster).</small>
+          </div>
+
+          <div class="control-group toggle-group">
+            <label class="switch">
+              <input type="checkbox" id="checkSmoothing" checked>
+              <span class="slider round"></span>
+            </label>
+            <span>Kanten-Glättung (Bilateral-Filter)</span>
+          </div>
+        </div>
+
+        <div class="panel-section collapsible collapsed" id="sectionPhotoAdjust">
+          <div class="collapsible-header" id="headerPhotoAdjust">
+            <h3>📷 Bildoptimierung</h3>
+            <span class="chevron">▾</span>
+          </div>
+          <div class="collapsible-body">
+            <div class="control-group">
+              <div class="label-row">
+                <label for="sliderGamma">Helligkeit (Gamma):</label>
+                <span id="valGamma" class="val-badge">1.0</span>
+              </div>
+              <input type="range" id="sliderGamma" min="0.7" max="1.4" step="0.05" value="1.0">
+            </div>
+
+            <div class="control-group">
+              <div class="label-row">
+                <label for="sliderContrast">Kontrast:</label>
+                <span id="valContrast" class="val-badge">1.0</span>
+              </div>
+              <input type="range" id="sliderContrast" min="0.7" max="1.5" step="0.05" value="1.0">
+            </div>
+
+            <div class="control-group">
+              <div class="label-row">
+                <label for="sliderSaturation">Farbsättigung:</label>
+                <span id="valSaturation" class="val-badge">1.05</span>
+              </div>
+              <input type="range" id="sliderSaturation" min="0.5" max="1.6" step="0.05" value="1.05">
+            </div>
+          </div>
+        </div>
+
+        <div class="panel-section collapsible collapsed" id="sectionViewSettings">
+          <div class="collapsible-header" id="headerViewSettings">
+            <h3>📐 Druck- & Ansichtsoptionen</h3>
+            <span class="chevron">▾</span>
+          </div>
+          <div class="collapsible-body">
+            <div class="control-group">
+              <div class="label-row">
+                <label for="sliderLineWidth">Linienstärke Konturen:</label>
+                <span id="valLineWidth" class="val-badge">1 px</span>
+              </div>
+              <input type="range" id="sliderLineWidth" min="1" max="3" step="0.5" value="1">
+            </div>
+
+            <div class="control-group">
+              <div class="label-row">
+                <label for="sliderNumberScale">Zahlengröße:</label>
+                <span id="valNumberScale" class="val-badge">100%</span>
+              </div>
+              <input type="range" id="sliderNumberScale" min="70" max="140" step="5" value="100">
+            </div>
+
+            <div class="control-group">
+              <label for="selectPaperFormat">PDF-Druckformat:</label>
+              <select id="selectPaperFormat" class="select-input">
+                <option value="a4" selected>DIN A4 (Querformat)</option>
+                <option value="a3">DIN A3 (Groß)</option>
+                <option value="canvas6040">60 × 40 cm Leinwand (Original)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Progress Box -->
+        <div id="progressBox" class="progress-box" style="display:none;">
+          <div class="progress-label" id="progressText">Berechnung läuft...</div>
+          <div class="progress-bar-bg">
+            <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Center: Viewport & Canvas -->
+      <main class="viewport-center">
+        <!-- View Switcher Tabs -->
+        <div class="view-tabs">
+          <button class="tab-btn active" data-view="template">
+            📝 Malvorlage (Linien & Zahlen)
+          </button>
+          <button class="tab-btn" data-view="preview">
+            🎨 Farbige Vorschau
+          </button>
+          <button class="tab-btn" data-view="split">
+            ↔️ Vorher / Nachher
+          </button>
+          <button class="tab-btn" data-view="original">
+            🖼️ Originalfoto
+          </button>
+        </div>
+
+        <!-- Canvas Container with Zoom/Pan Support -->
+        <div class="canvas-stage" id="canvasStage">
+          <div class="canvas-transform-wrapper" id="canvasTransformWrapper">
+            <canvas id="mainCanvas"></canvas>
+            <canvas id="splitOverlayCanvas" style="display:none;"></canvas>
+            <div id="splitDivider" class="split-divider" style="display:none;">
+              <div class="split-handle">↔</div>
+            </div>
+          </div>
+
+          <!-- Empty State Prompt -->
+          <div id="emptyState" class="empty-state">
+            <div class="empty-icon">🎨</div>
+            <h2>Foto hochladen oder Beispiel testen</h2>
+            <p>Ziehe ein Bild hierher oder klicke auf "Beispielbild", um direkt loszulegen.</p>
+            <div class="empty-buttons">
+              <button class="btn btn-primary" onclick="document.getElementById('fileInput').click()">
+                Bild auswählen
+              </button>
+              <button class="btn btn-secondary" id="btnEmptySample">
+                Beispielbild testen
+              </button>
+            </div>
+          </div>
+
+          <!-- Interactive Hover Tooltip -->
+          <div id="canvasTooltip" class="canvas-tooltip" style="display:none;">
+            <div class="tooltip-swatch" id="tooltipSwatch"></div>
+            <div class="tooltip-info">
+              <div class="tooltip-title" id="tooltipTitle">Farbe #1</div>
+              <div class="tooltip-sub" id="tooltipSub">Amsterdam Code 105</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Zoom Controls -->
+        <div class="zoom-controls">
+          <button id="btnZoomIn" title="Vergrößern">+</button>
+          <span id="zoomLevelText">100%</span>
+          <button id="btnZoomOut" title="Verkleinern">−</button>
+          <button id="btnZoomFit" title="Einpassen">⛶</button>
+          <button id="btnZoomReset" title="Originalgröße">1:1</button>
+        </div>
+
+        <!-- Interactive Highlight Indicator Bar -->
+        <div id="highlightBanner" class="highlight-banner" style="display:none;">
+          <span id="highlightBannerText">Farbe hervorgehoben</span>
+          <button id="btnClearHighlight" class="btn-clear-highlight">Alle anzeigen ✕</button>
+        </div>
+      </main>
+
+      <!-- Right Sidebar: Interactive Palette & Amsterdam Acrylic Legend -->
+      <aside class="sidebar-right">
+        <div class="palette-header">
+          <div class="palette-title">
+            <h3>🎨 Farblegende</h3>
+            <span id="paletteCountBadge" class="val-badge">0 Farben</span>
+          </div>
+          <p class="palette-desc">
+            Klicke auf eine Farbe, um alle passenden Felder auf der Vorlage hervorzuheben:
+          </p>
+        </div>
+
+        <div class="palette-list" id="paletteList">
+          <!-- Dynamically populated -->
+          <div class="palette-empty">Noch keine Vorlage generiert.</div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
