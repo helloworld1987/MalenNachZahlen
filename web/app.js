@@ -747,54 +747,103 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     }
   }
 
-  // 2. Build surface height map H and apply pigment nuance inside the color fields
+  // 2. Base surface height map H with canvas linen weave and soft edge meniscus
   const H = new Float32Array(total);
-  const defaultRegion = { x: width * 0.5, y: height * 0.5, cosT: 0.88, sinT: 0.47, phase: 0 };
-
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
-
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
-      const rId = labels[idx];
-      const reg = (regions && regions[rId]) ? regions[rId] : defaultRegion;
-
-      const dx = x - reg.x;
-      const dy = y - reg.y;
-
-      const cosT = reg.cosT !== undefined ? reg.cosT : 0.88;
-      const sinT = reg.sinT !== undefined ? reg.sinT : 0.47;
-      const phase = reg.phase !== undefined ? reg.phase : 0;
-
-      // Regional stroke coordinates
-      const u = dx * cosT + dy * sinT;
-      const v = -dx * sinT + dy * cosT + phase;
-
-      // Fine bristle striations (grooves within the stroke width, spacing 2.6 - 5.5px)
-      const bristle = 0.50 * Math.sin(v * 1.96) + 0.30 * Math.sin(v * 1.21 + 1.2) + 0.20 * Math.sin(v * 0.74 + 2.4);
-
-      // Longitudinal stroke flow (flowing paint deposit & pressure variations)
-      const strokeFlow = 0.60 * Math.sin(u * 0.16 + Math.sin(v * 0.1) * 1.2) + 0.40 * Math.cos(u * 0.08);
-
-      // Canvas linen weave (orthogonal warp & weft threads, 3.6px pitch)
-      const canvasWeave = Math.sin(x * 1.745) * Math.sin(y * 1.745) * 0.55;
-
-      // Physical paint thickness factor: lighter/opaque acrylics build thicker impasto ridges
-      const p = idx * 4;
-      const lum = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
-      const lumFactor = 0.35 + lum * 0.85;
-
-      // Subtle pigment nuance inside the stroke (real paint has density variation across bristles)
-      const pigmentNuance = (bristle * 4.2 + strokeFlow * 2.8) * lumFactor * strength;
-      data[p] = Math.max(0, Math.min(255, data[p] + pigmentNuance));
-      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + pigmentNuance));
-      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + pigmentNuance));
-
-      // Soft edge meniscus (capillary rim where brush deposited paint at boundary, max height 1.5)
+      // Gentle capillary edge meniscus (paint builds slightly at border)
       const d = dist[idx];
       const edgeLip = (d <= 2.0) ? Math.cos(d * 0.785) * 1.5 : 0.0;
+      // Orthogonal linen canvas weave
+      const canvasWeave = (Math.sin(x * 1.745) * Math.sin(y * 1.745)) * 0.45;
+      H[idx] = edgeLip + canvasWeave;
+    }
+  }
 
-      H[idx] = (bristle * 1.8 + strokeFlow * 1.2) * lumFactor + canvasWeave * 0.65 + edgeLip;
+  // 3. Place individual, hand-painted, overlapping brush strokes inside each color region
+  const strokeSpacing = 13;
+  const brushLen = 34;
+  const brushRadius = 7.5;
+  const defaultRegion = { angle: 0.48, cosT: 0.88, sinT: 0.47 };
+
+  // Generate grid of stroke seeds with natural hand jitter
+  const strokes = [];
+  for (let y = 0; y < height; y += strokeSpacing) {
+    for (let x = 0; x < width; x += strokeSpacing) {
+      const randSeed = ((x * 37 + y * 101) % 997) / 997.0;
+      const randSeed2 = ((x * 79 + y * 43) % 997) / 997.0;
+      const jx = Math.max(0, Math.min(width - 1, (x + (randSeed - 0.5) * strokeSpacing * 0.8) | 0));
+      const jy = Math.max(0, Math.min(height - 1, (y + (randSeed2 - 0.5) * strokeSpacing * 0.8) | 0));
+      const r = labels[jy * width + jx];
+      if (r >= 0) {
+        strokes.push({ sx: jx, sy: jy, r, seed: randSeed });
+      }
+    }
+  }
+
+  // Render individual strokes
+  for (let i = 0; i < strokes.length; i++) {
+    const { sx, sy, r, seed } = strokes[i];
+    const reg = (regions && regions[r]) ? regions[r] : defaultRegion;
+
+    // Small organic jitter in angle so strokes in a region aren't all machine-parallel
+    const angleJitter = (seed - 0.5) * 0.35;
+    const theta = (reg.angle !== undefined ? reg.angle : 0.48) + angleJitter;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+
+    const hl = brushLen * 0.5 * (0.8 + seed * 0.4);
+    const hw = brushRadius * (0.85 + (1.0 - seed) * 0.3);
+    const maxDim = 20;
+
+    const x0 = Math.max(0, sx - maxDim);
+    const x1 = Math.min(width, sx + maxDim + 1);
+    const y0 = Math.max(0, sy - maxDim);
+    const y1 = Math.min(height, sy + maxDim + 1);
+
+    // Stroke-to-stroke pigment nuance (dipping the brush)
+    const strokeNuance = (seed - 0.5) * 11.0 * strength;
+
+    for (let py = y0; py < y1; py++) {
+      const rowOffset = py * width;
+      for (let px = x0; px < x1; px++) {
+        // Strict boundary containment: stroke belongs ONLY to its own region!
+        if (labels[rowOffset + px] !== r) continue;
+
+        const dx = px - sx;
+        const dy = py - sy;
+        const u = dx * cosT + dy * sinT;
+        const v = -dx * sinT + dy * cosT;
+
+        const normU = Math.abs(u) / hl;
+        const normV = Math.abs(v) / hw;
+
+        if (normU <= 1.0 && normV <= 1.0) {
+          const wu = Math.cos(normU * 1.5708);
+          const wv = Math.cos(normV * 1.5708);
+          const strokeMask = wu * wv;
+
+          // Fine bristle grooves within this specific stroke (spacing ~ 2.8px)
+          const bristle = 0.55 * Math.sin(v * 2.2) + 0.35 * Math.sin(v * 1.4 + 1.1) + 0.20 * Math.sin(v * 0.8 + 2.0);
+
+          const idx = rowOffset + px;
+          const p = idx * 4;
+
+          const lum = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
+          const lumFactor = 0.35 + lum * 0.85;
+
+          const strokeH = strokeMask * (1.6 + bristle * 0.9) * lumFactor * strength;
+          H[idx] = Math.max(H[idx], H[idx] * 0.35 + strokeH * 1.6);
+
+          const alpha = strokeMask * 0.42 * strength;
+          const deltaCol = (strokeNuance + bristle * 3.5 * lumFactor);
+          data[p] = Math.max(0, Math.min(255, data[p] * (1.0 - alpha) + (data[p] + deltaCol) * alpha));
+          data[p + 1] = Math.max(0, Math.min(255, data[p + 1] * (1.0 - alpha) + (data[p + 1] + deltaCol) * alpha));
+          data[p + 2] = Math.max(0, Math.min(255, data[p + 2] * (1.0 - alpha) + (data[p + 2] + deltaCol) * alpha));
+        }
+      }
     }
   }
 
