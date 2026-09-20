@@ -1589,10 +1589,12 @@ function preprocessImageData(imageData, config) {
 
   const out = new Uint8ClampedArray(data.length);
 
-  // Gamma LUT
+  // Gamma LUT with adaptive shadow preservation (keeps dark details in cars, jackets, street)
   const lut = new Uint8Array(256);
   for (let i = 0; i < 256; i++) {
     let v = i / 255.0;
+    // Gentle shadow curve: lifts deep shadows (v < 0.25) so subtle reflections aren't crushed to zero
+    v = v + Math.pow(1.0 - v, 3.2) * v * 0.40;
     if (gamma !== 1.0) v = Math.pow(v, gamma);
     if (contrast !== 1.0) v = (v - 0.5) * contrast + 0.5;
     lut[i] = Math.max(0, Math.min(255, Math.round(v * 255)));
@@ -2438,10 +2440,27 @@ function computeRegionCenters(labels, width, height, numRegions) {
       }
     }
 
+    // Regional brush stroke orientation & phase for authentic hand-painted duktus
+    let angle = 0;
+    if (bw > bh * 1.35) {
+      // Elongated horizontally (road stripes, street markings, car bumpers/hood)
+      angle = ((r * 13) % 15 - 7) * (Math.PI / 180.0);
+    } else if (bh > bw * 1.35) {
+      // Elongated vertically (window pillars, lampposts, legs, trees)
+      angle = (90.0 + ((r * 13) % 15 - 7)) * (Math.PI / 180.0);
+    } else {
+      // Natural artist hand sweep ~ 28 degrees +- 14 degrees
+      angle = (28.0 + ((r * 29) % 29 - 14)) * (Math.PI / 180.0);
+    }
+
     centers.push({
       x: bestX,
       y: bestY,
-      radius: Math.round(bestRadius)
+      radius: Math.round(bestRadius),
+      angle: angle,
+      cosT: Math.cos(angle),
+      sinT: Math.sin(angle),
+      phase: ((r * 47) % 100) / 10.0
     });
   }
 
@@ -2545,7 +2564,11 @@ self.onmessage = function (e) {
             x: centers[r].x,
             y: centers[r].y,
             radius: centers[r].radius,
-            area: count
+            area: count,
+            angle: centers[r].angle,
+            cosT: centers[r].cosT,
+            sinT: centers[r].sinT,
+            phase: centers[r].phase
           });
         }
       }
@@ -2559,9 +2582,10 @@ self.onmessage = function (e) {
           boundaries,
           polylines,
           palette: activeColors,
-          regions
+          regions,
+          preprocessedPixels: currentData
         }
-      }, [smoothedLabels.buffer, boundaries.buffer, polylines.buffer]);
+      }, [smoothedLabels.buffer, boundaries.buffer, polylines.buffer, currentData.buffer]);
 
     } catch (err) {
       self.postMessage({ type: 'error', error: err.message, stack: err.stack });

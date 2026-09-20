@@ -89,8 +89,8 @@ const btnCrop = document.getElementById('btnCrop');
 // Presets (Balanced for real-world acrylic painting)
 const PRESETS = {
   street: {
-    colors: 26, minRegion: 240, smooth: true, kuwahara: true,
-    gamma: 1.05, contrast: 1.05, saturation: 1.20, lineWidth: 1.0
+    colors: 28, minRegion: 140, smooth: true, kuwahara: true,
+    gamma: 1.00, contrast: 1.02, saturation: 1.15, lineWidth: 1.0
   },
   portrait: {
     colors: 22, minRegion: 200, smooth: true, kuwahara: true,
@@ -584,7 +584,7 @@ function renderTemplate(ctx, highlightNum = null) {
 }
 
 function renderPreview(ctx, highlightNum = null) {
-  const { width, height, labels, regions, palette, boundaries } = processedData;
+  const { width, height, labels, regions, palette, boundaries, preprocessedPixels } = processedData;
 
   const imgData = ctx.createImageData(width, height);
   const d = imgData.data;
@@ -611,15 +611,32 @@ function renderPreview(ctx, highlightNum = null) {
     }
   }
 
+  const isAcrylic = !checkAcrylicEffect || checkAcrylicEffect.checked;
+  const strength = sliderImpasto ? parseFloat(sliderImpasto.value) : 1.0;
+
   for (let i = 0; i < labels.length; i++) {
     const regId = labels[i];
     const cOffset = regId * 3;
     const p = i * 4;
 
-    // Direct solid paint fill without artificial black outlines
-    d[p] = colorMap[cOffset];
-    d[p + 1] = colorMap[cOffset + 1];
-    d[p + 2] = colorMap[cOffset + 2];
+    const rPal = colorMap[cOffset];
+    const gPal = colorMap[cOffset + 1];
+    const bPal = colorMap[cOffset + 2];
+
+    let deltaY = 0;
+    if (isAcrylic && preprocessedPixels && highlightNum === null) {
+      const rPre = preprocessedPixels[p];
+      const gPre = preprocessedPixels[p + 1];
+      const bPre = preprocessedPixels[p + 2];
+      const yPre = 0.299 * rPre + 0.587 * gPre + 0.114 * bPre;
+      const yPal = 0.299 * rPal + 0.587 * gPal + 0.114 * bPal;
+      // Painterly form & reflection shading (+-18 levels, preserving palette color identity)
+      deltaY = Math.max(-18, Math.min(18, (yPre - yPal) * 0.25));
+    }
+
+    d[p] = Math.max(0, Math.min(255, rPal + deltaY));
+    d[p + 1] = Math.max(0, Math.min(255, gPal + deltaY));
+    d[p + 2] = Math.max(0, Math.min(255, bPal + deltaY));
     d[p + 3] = 255;
   }
 
@@ -627,10 +644,8 @@ function renderPreview(ctx, highlightNum = null) {
   softenColorBoundaries(d, labels, width, height);
 
   // Optional Acrylic & Canvas Texture (Impasto, Pinselduktus & Leinwandgewebe)
-  const isAcrylic = !checkAcrylicEffect || checkAcrylicEffect.checked;
   if (isAcrylic && highlightNum === null) {
-    const strength = sliderImpasto ? parseFloat(sliderImpasto.value) : 1.0;
-    applyOrganicAcrylicTexture(d, width, height, boundaries, labels, strength);
+    applyOrganicAcrylicTexture(d, width, height, boundaries, labels, regions, strength);
   }
 
   ctx.putImageData(imgData, 0, 0);
@@ -686,12 +701,13 @@ function softenColorBoundaries(data, labels, width, height) {
 }
 
 // Authentic Acrylic Impasto & Farbraupen Relief Shader
-// Simulates physically applied paint layers: 3D rounded paint lips (Farbraupen) at field borders,
-// organic palette-knife sweeps, and satin acrylic sheen
-function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, strength = 1.0) {
+// Simulates physically applied paint layers: regional brush strokes with individual angles,
+// bristle grooves (Pinselborsten-Riefen), pigment nuances, cotton/linen canvas weave,
+// and Amsterdam satin specular sheen
+function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, regions, strength = 1.0) {
   const total = width * height;
 
-  // 1. Fast bounded distance propagation to region borders (up to 4px) for rounded paint lips
+  // 1. Fast bounded distance propagation to region borders (up to 3px) for gentle paint lip
   const dist = new Float32Array(total).fill(99);
 
   for (let y = 0; y < height; y++) {
@@ -731,37 +747,62 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
     }
   }
 
-  // 2. Build surface height map H (Thick paint body + 3D Farbraupen + Linen canvas grain)
+  // 2. Build surface height map H and apply pigment nuance inside the color fields
   const H = new Float32Array(total);
+  const defaultRegion = { x: width * 0.5, y: height * 0.5, cosT: 0.88, sinT: 0.47, phase: 0 };
+
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
 
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
+      const rId = labels[idx];
+      const reg = (regions && regions[rId]) ? regions[rId] : defaultRegion;
 
-      // Physical 3D Farbraupe (rounded bead of acrylic paint where brush stroke meets border)
+      const dx = x - reg.x;
+      const dy = y - reg.y;
+
+      const cosT = reg.cosT !== undefined ? reg.cosT : 0.88;
+      const sinT = reg.sinT !== undefined ? reg.sinT : 0.47;
+      const phase = reg.phase !== undefined ? reg.phase : 0;
+
+      // Regional stroke coordinates
+      const u = dx * cosT + dy * sinT;
+      const v = -dx * sinT + dy * cosT + phase;
+
+      // Fine bristle striations (grooves within the stroke width, spacing 2.6 - 5.5px)
+      const bristle = 0.50 * Math.sin(v * 1.96) + 0.30 * Math.sin(v * 1.21 + 1.2) + 0.20 * Math.sin(v * 0.74 + 2.4);
+
+      // Longitudinal stroke flow (flowing paint deposit & pressure variations)
+      const strokeFlow = 0.60 * Math.sin(u * 0.16 + Math.sin(v * 0.1) * 1.2) + 0.40 * Math.cos(u * 0.08);
+
+      // Canvas linen weave (orthogonal warp & weft threads, 3.6px pitch)
+      const canvasWeave = Math.sin(x * 1.745) * Math.sin(y * 1.745) * 0.55;
+
+      // Physical paint thickness factor: lighter/opaque acrylics build thicker impasto ridges
+      const p = idx * 4;
+      const lum = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
+      const lumFactor = 0.35 + lum * 0.85;
+
+      // Subtle pigment nuance inside the stroke (real paint has density variation across bristles)
+      const pigmentNuance = (bristle * 4.2 + strokeFlow * 2.8) * lumFactor * strength;
+      data[p] = Math.max(0, Math.min(255, data[p] + pigmentNuance));
+      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + pigmentNuance));
+      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + pigmentNuance));
+
+      // Soft edge meniscus (capillary rim where brush deposited paint at boundary, max height 1.5)
       const d = dist[idx];
-      const edgeRidge = d <= 3.0 ? Math.cos(d * 0.5236) * 5.2 : 0.0;
+      const edgeLip = (d <= 2.0) ? Math.cos(d * 0.785) * 1.5 : 0.0;
 
-      // Broad organic palette-knife impasto sweeps (period 60-140px, non-periodic)
-      const u = x * 0.88 + y * 0.47;
-      const v = -x * 0.47 + y * 0.88;
-      const knifeFacet = Math.sin(u * 0.025 + Math.sin(v * 0.03) * 1.8) * 2.6 + Math.cos(v * 0.038) * 1.5;
-
-      // Fine linen canvas grain (stochastic micro-texture, 1-2px)
-      const rand = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-      const canvasGrain = (rand - Math.floor(rand) - 0.5) * 0.85;
-
-      H[idx] = edgeRidge + knifeFacet + canvasGrain;
+      H[idx] = (bristle * 1.8 + strokeFlow * 1.2) * lumFactor + canvasWeave * 0.65 + edgeLip;
     }
   }
 
-  // 3. 3D Directional Lighting (Natural sun from top-left, 45 degrees)
+  // 3. Directional Satin Lighting (Amsterdam Standard Acrylics finish)
+  const scaleH = 0.36 * strength;
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
-
-  const scaleH = 0.40 * strength;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
@@ -770,36 +811,27 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
       const idx = rowOffset + x;
       const p = idx * 4;
 
-      const dhdx = (H[idx + 1] - H[idx - 1]) * scaleH;
-      const dhdy = (H[idx + width] - H[idx - width]) * scaleH;
+      const dhdx = (H[idx + 1] - H[idx - 1]) * (scaleH * 0.5);
+      const dhdy = (H[idx + width] - H[idx - width]) * (scaleH * 0.5);
 
       const invN = 1.0 / Math.sqrt(dhdx * dhdx + dhdy * dhdy + 1.0);
       const nx = -dhdx * invN;
       const ny = -dhdy * invN;
       const nz = 1.0 * invN;
 
-      // Diffuse relief
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.48) * 44 * strength;
+      const diffuse = (nDotL - 0.48) * 32.0 * strength;
 
-      // Satin specular sheen on thick paint highlights
+      // Satin specular gloss along stroke crests
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
-        spec = Math.pow(rz, 10) * 32 * strength;
+        spec = Math.pow(rz, 9) * 22.0 * strength;
       }
 
-      // Contact shadow groove at opposite side of paint lip
-      const d = dist[idx];
-      const cavity = (d < 1.5 && nDotL < 0.45) ? -6.0 * strength : 0.0;
-
-      const r = data[p], g = data[p + 1], b = data[p + 2];
-      const isDark = (r + g + b) < 190;
-      const gloss = isDark ? spec * 1.15 : spec * 0.35;
-
-      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss + cavity));
-      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss + cavity));
-      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss + cavity));
+      data[p] = Math.max(0, Math.min(255, data[p] + diffuse + spec));
+      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + diffuse + spec));
+      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + diffuse + spec));
     }
   }
 }
