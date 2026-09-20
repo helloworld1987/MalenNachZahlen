@@ -685,45 +685,37 @@ function softenColorBoundaries(data, labels, width, height) {
   }
 }
 
-// Authentic Acrylic Brushstroke & Impasto Relief Shader
-// Replaces artificial square grid cells with continuous directional bristle sweeps, fine canvas weave, and satin sheen
+// Authentic Acrylic Impasto & Canvas Shader
+// Eliminates all artificial net/corduroy stripes; renders broad organic knife sweeps and fine linen grain
 function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, strength = 1.0) {
   const total = width * height;
   const H = new Float32Array(total);
 
-  // Brush flow angle: sweeping ~23 degrees diagonal flow with gentle organic wave
-  const theta = 0.40;
-  const cosT = Math.cos(theta);
-  const sinT = Math.sin(theta);
-
-  // 1. Build continuous organic surface height map (ZERO square grid cells!)
+  // 1. Build continuous organic surface height map (ZERO periodic stripes or net patterns)
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
-    const yCos = y * cosT;
-    const ySin = y * sinT;
 
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
 
-      // Coordinate along stroke (u) and across stroke (v)
-      const u = x * cosT + ySin;
-      const v = -x * sinT + yCos;
+      // Coordinate along sweeping stroke (u) and across stroke (v) with period ~150-250px
+      const u = x * 0.88 + y * 0.47;
+      const v = -x * 0.47 + y * 0.88;
 
-      // 1. Broad undulating palette-knife facets (long, continuous sweeps)
-      const knifeFacet = Math.cos(u * 0.022 + Math.sin(v * 0.035)) * 2.2;
+      // 1. Large expressive palette-knife facets (long, gentle sweeps)
+      const knifeFacet = Math.sin(u * 0.012 + Math.sin(v * 0.015) * 1.5) * 2.0;
 
-      // 2. Parallel brush bristles (hair lines flowing along the brush stroke)
-      const bristle1 = Math.sin(v * 0.72 + Math.sin(u * 0.016) * 1.1) * 1.3;
-      const bristle2 = Math.sin(v * 1.5 + 1.2) * 0.6;
-      const bristle3 = Math.sin(v * 2.9) * 0.25;
+      // 2. Subtle paint body undulation
+      const swirl = Math.cos(v * 0.025 + Math.sin(u * 0.02) * 1.2) * 0.9;
 
-      // 3. Fine interwoven linen canvas weave (microscopic fabric grain)
-      const canvasWeave = (Math.sin(x * 0.72) * Math.cos(y * 0.72)) * 0.45;
+      // 3. Natural linen canvas grain (stochastic micro-texture, 1-2px, NO repeating mesh!)
+      const rand = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+      const canvasGrain = (rand - Math.floor(rand) - 0.5) * 0.65;
 
       // 4. Soft acrylic paint edge lip (accumulation where brush stroke stops)
       const edgeLip = boundaries && boundaries[idx] === 1 ? 3.2 : 0;
 
-      H[idx] = knifeFacet + bristle1 + bristle2 + bristle3 + canvasWeave + edgeLip;
+      H[idx] = knifeFacet + swirl + canvasGrain + edgeLip;
     }
   }
 
@@ -732,11 +724,10 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
 
-  const scaleH = 0.36 * strength;
+  const scaleH = 0.35 * strength;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
-    const yCos = y * cosT;
 
     for (let x = 1; x < width - 1; x++) {
       const idx = rowOffset + x;
@@ -752,26 +743,22 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
 
       // Diffuse light (soft tactile 3D relief)
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.50) * 38 * strength;
+      const diffuse = (nDotL - 0.50) * 36 * strength;
 
       // Specular sheen for glossy acrylic paint
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
-        spec = Math.pow(rz, 10) * 26 * strength;
+        spec = Math.pow(rz, 12) * 24 * strength;
       }
 
       const r = data[p], g = data[p + 1], b = data[p + 2];
-      const isDark = (r + g + b) < 190;
-      const gloss = isDark ? spec * 1.05 : spec * 0.28;
+      const isDark = (r + g + b) < 180;
+      const gloss = isDark ? spec * 1.1 : spec * 0.25;
 
-      // Subtle bristle pigment opacity nuance (natural paint streakiness along the stroke)
-      const v = -x * sinT + yCos;
-      const bristleTint = Math.sin(v * 0.72) * 2.8 * strength;
-
-      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss + bristleTint));
-      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss + bristleTint));
-      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss + bristleTint));
+      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss));
+      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss));
+      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss));
     }
   }
 }
