@@ -579,24 +579,21 @@ function renderPreview(ctx, highlightNum = null) {
     const cOffset = regId * 3;
     const p = i * 4;
 
-    if (boundaries[i] === 1) {
-      // Subtle boundary overlay
-      d[p] = Math.round(colorMap[cOffset] * 0.65);
-      d[p + 1] = Math.round(colorMap[cOffset + 1] * 0.65);
-      d[p + 2] = Math.round(colorMap[cOffset + 2] * 0.65);
-    } else {
-      d[p] = colorMap[cOffset];
-      d[p + 1] = colorMap[cOffset + 1];
-      d[p + 2] = colorMap[cOffset + 2];
-    }
+    // Direct solid paint fill without artificial black outlines
+    d[p] = colorMap[cOffset];
+    d[p + 1] = colorMap[cOffset + 1];
+    d[p + 2] = colorMap[cOffset + 2];
     d[p + 3] = 255;
   }
+
+  // Soften pixel staircases along color boundaries for organic brush edges
+  softenColorBoundaries(d, labels, width, height);
 
   // Optional Acrylic & Canvas Texture (Impasto, Pinselduktus & Leinwandgewebe)
   const isAcrylic = !checkAcrylicEffect || checkAcrylicEffect.checked;
   if (isAcrylic && highlightNum === null) {
     const strength = sliderImpasto ? parseFloat(sliderImpasto.value) : 1.0;
-    applyAcrylicCanvasTexture(d, width, height, boundaries, strength);
+    applyOrganicAcrylicTexture(d, width, height, boundaries, labels, strength);
   }
 
   ctx.putImageData(imgData, 0, 0);
@@ -620,41 +617,85 @@ function renderPreview(ctx, highlightNum = null) {
   }
 }
 
-// Procedural Acrylic Impasto, Brush Strokes & Canvas Weave Shader
-function applyAcrylicCanvasTexture(data, width, height, boundaries, strength = 1.0) {
+// Anti-alias pixel staircases so color fields look like painted brush strokes
+function softenColorBoundaries(data, labels, width, height) {
+  for (let y = 1; y < height - 1; y++) {
+    const rowOffset = y * width;
+    for (let x = 1; x < width - 1; x++) {
+      const idx = rowOffset + x;
+      const curr = labels[idx];
+
+      // Check if pixel is on a color boundary
+      if (labels[idx + 1] !== curr || labels[idx + width] !== curr) {
+        const p = idx * 4;
+        const pR = (idx + 1) * 4;
+        const pB = (idx + width) * 4;
+
+        // Subtle 1-pixel blend along color boundary
+        data[p] = Math.round(data[p] * 0.70 + (data[pR] + data[pB]) * 0.15);
+        data[p + 1] = Math.round(data[p + 1] * 0.70 + (data[pR + 1] + data[pB + 1]) * 0.15);
+        data[p + 2] = Math.round(data[p + 2] * 0.70 + (data[pR + 2] + data[pB + 2]) * 0.15);
+      }
+    }
+  }
+}
+
+// Organic Palette-Knife & Acrylic Impasto Relief Shader
+function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, strength = 1.0) {
   const total = width * height;
   const H = new Float32Array(total);
 
-  // 1. Build tactile height map
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width;
-    for (let x = 0; x < width; x++) {
-      const idx = rowOffset + x;
+  // Fast multi-scale noise grid for natural palette-knife strokes & swirls
+  const step = 14;
+  const gw = Math.ceil(width / step) + 2;
+  const gh = Math.ceil(height / step) + 2;
+  const noiseGrid = new Float32Array(gw * gh);
 
-      // Directional brush stroke sweeps (diagonal ~25-30 degrees)
-      const u = x * 0.88 + y * 0.47;
-      const v = -x * 0.47 + y * 0.88;
-
-      // Bristle streaks and palette knife facets
-      const bristle = Math.sin(v * 0.32) * 3.5 + Math.sin(v * 0.85) * 1.8;
-      const knifeFacet = Math.cos(u * 0.04) * 2.8;
-
-      // Fine linen canvas weave
-      const weave = (Math.sin(x * 1.25) * Math.cos(y * 1.25)) * 2.4;
-
-      // Paint edge ridge (lip of acrylic paint where brush stroke stops)
-      const edge = boundaries && boundaries[idx] === 1 ? 5.5 : 0;
-
-      H[idx] = bristle + knifeFacet + weave + edge;
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      // Deterministic pseudo-random seed
+      const n = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+      noiseGrid[gy * gw + gx] = (n - Math.floor(n) - 0.5) * 8.0;
     }
   }
 
-  // 2. Directional 3D lighting (Top-left sun at 10 o'clock)
+  // 1. Build organic surface height map
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    const gy = Math.floor(y / step);
+    const ty = (y % step) / step;
+    const gRow0 = gy * gw;
+    const gRow1 = (gy + 1) * gw;
+
+    for (let x = 0; x < width; x++) {
+      const idx = rowOffset + x;
+      const gx = Math.floor(x / step);
+      const tx = (x % step) / step;
+
+      // Bilinear interpolation of broad paint strokes
+      const g00 = noiseGrid[gRow0 + gx];
+      const g10 = noiseGrid[gRow0 + gx + 1];
+      const g01 = noiseGrid[gRow1 + gx];
+      const g11 = noiseGrid[gRow1 + gx + 1];
+
+      const broadStroke = (g00 * (1 - tx) + g10 * tx) * (1 - ty) + (g01 * (1 - tx) + g11 * tx) * ty;
+
+      // Micro linen canvas weave (ultra-fine, no stripes)
+      const weave = ((x % 2 === 0 ? 1 : -1) + (y % 2 === 0 ? 1 : -1)) * 0.7;
+
+      // Thick paint edge lip (impasto accumulation where brush stops)
+      const isEdge = boundaries && boundaries[idx] === 1 ? 4.5 : 0;
+
+      H[idx] = broadStroke + weave + isEdge;
+    }
+  }
+
+  // 2. 3D Directional Lighting (Sun from top-left, 45 degrees)
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
 
-  const scaleH = 0.52 * strength;
+  const scaleH = 0.40 * strength;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
@@ -662,19 +703,17 @@ function applyAcrylicCanvasTexture(data, width, height, boundaries, strength = 1
       const idx = rowOffset + x;
       const p = idx * 4;
 
-      // Slope gradients
       const dhdx = (H[idx + 1] - H[idx - 1]) * scaleH;
       const dhdy = (H[idx + width] - H[idx - width]) * scaleH;
 
-      // Normal vector
       const invN = 1.0 / Math.sqrt(dhdx * dhdx + dhdy * dhdy + 1.0);
       const nx = -dhdx * invN;
       const ny = -dhdy * invN;
       const nz = 1.0 * invN;
 
-      // Diffuse light
+      // Diffuse relief
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.48) * 52 * strength;
+      const diffuse = (nDotL - 0.50) * 44 * strength;
 
       // Specular sheen for glossy acrylic paint
       let spec = 0;
@@ -683,13 +722,12 @@ function applyAcrylicCanvasTexture(data, width, height, boundaries, strength = 1
         const ry = 2 * nDotL * ny - nLy;
         const rz = 2 * nDotL * nz - nLz;
         const rDotV = Math.max(0, rz);
-        spec = Math.pow(rDotV, 8) * 38 * strength;
+        spec = Math.pow(rDotV, 8) * 32 * strength;
       }
 
-      // Acrylic sheen on dark values (SUV, asphalt shadow)
       const r = data[p], g = data[p + 1], b = data[p + 2];
-      const isDark = (r + g + b) < 190;
-      const gloss = isDark ? spec * 1.2 : spec * 0.35;
+      const isDark = (r + g + b) < 200;
+      const gloss = isDark ? spec * 1.1 : spec * 0.3;
 
       data[p] = Math.max(0, Math.min(255, r + diffuse + gloss));
       data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss));
