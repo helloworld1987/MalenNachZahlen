@@ -52,6 +52,7 @@ const valLineWidth = document.getElementById('valLineWidth');
 const sliderNumberScale = document.getElementById('sliderNumberScale');
 const valNumberScale = document.getElementById('valNumberScale');
 const selectPaperFormat = document.getElementById('selectPaperFormat');
+const checkAcrylicEffect = document.getElementById('checkAcrylicEffect');
 
 // Progress
 const progressBox = document.getElementById('progressBox');
@@ -173,6 +174,11 @@ function initEvents() {
     valNumberScale.textContent = `${sliderNumberScale.value}%`;
     if (processedData) renderCurrentView();
   });
+  if (checkAcrylicEffect) {
+    checkAcrylicEffect.addEventListener('change', () => {
+      if (processedData) renderCurrentView();
+    });
+  }
 
   // Presets
   document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -576,6 +582,12 @@ function renderPreview(ctx, highlightNum = null) {
     d[p + 3] = 255;
   }
 
+  // Optional Acrylic & Canvas Texture (Impasto, Pinselduktus & Leinwandgewebe)
+  const isAcrylic = !checkAcrylicEffect || checkAcrylicEffect.checked;
+  if (isAcrylic && highlightNum === null) {
+    applyAcrylicCanvasTexture(d, width, height);
+  }
+
   ctx.putImageData(imgData, 0, 0);
 
   // If highlighted, outline target regions prominently
@@ -594,6 +606,43 @@ function renderPreview(ctx, highlightNum = null) {
       }
     }
     ctx.shadowBlur = 0;
+  }
+}
+
+// Procedural Acrylic Impasto & Canvas Weave Filter
+function applyAcrylicCanvasTexture(data, width, height) {
+  // Precompute luminance map for 3D directional lighting
+  const lum = new Float32Array(width * height);
+  for (let i = 0; i < width * height; i++) {
+    const p = i * 4;
+    lum[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+  }
+
+  for (let y = 1; y < height - 1; y++) {
+    const rowOffset = y * width;
+    for (let x = 1; x < width - 1; x++) {
+      const idx = rowOffset + x;
+      const p = idx * 4;
+
+      // 1. Linen Canvas Weave Texture (micro-fabric weave)
+      const weaveX = Math.sin(x * 1.57);
+      const weaveY = Math.sin(y * 1.57);
+      const canvasWeave = (weaveX * weaveY) * 5.5;
+
+      // 2. 3D Paint Ridge & Impasto (Light source from top-left, 45 degrees)
+      const dx = lum[idx] - lum[idx - 1];
+      const dy = lum[idx] - lum[idx - width];
+      const slope = (dx + dy) * 0.38;
+
+      // 3. Directional Brush Stroke Texture
+      const strokeGrain = Math.sin((x * 0.85 + y * 0.45) * 0.6) * 3.5;
+
+      const totalEffect = canvasWeave + slope + strokeGrain;
+
+      data[p] = Math.max(0, Math.min(255, data[p] + totalEffect));
+      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + totalEffect));
+      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + totalEffect));
+    }
   }
 }
 
