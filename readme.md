@@ -172,6 +172,20 @@ Die Option `--merge-close` fasst **sehr ähnliche Farben** zusammen, um die Pale
 ---
 ## 📜 Changelog
 
+### v2.0.0 (2026-09-20)
+
+-   **🎨 Authentischer Acryl-Impasto-Shader (Reverse-Engineered):**
+    -   Physikalische **Kantenwülste (Boundary Paint Ridges)** per 2-Pass-Chamfer-Distanztransform (Farbe baut sich realistisch am Rand der Farbfelder auf).
+    -   **Farbfeld-orientierter Pinselduktus:** Automatische Berechnung der Hauptträgheitsachsen (PCA-Momente 2. Ordnung $\mu_{20}, \mu_{02}, \mu_{11}$) für jedes Farbfeld – Pinselzüge folgen der exakten geometrischen Strömung von Bauteilen, Straßen und Wänden.
+    -   **Tiefschwarz-Schutz & Kantenglanz:** Schwarze und dunkle Farbtöne (z. B. Lampenschwarz) behalten ihre volle Tiefe ohne Grauschleier, während seidenglänzende Glanzlichter Kanten akzentuieren.
+    -   Echtes Leinwandgewebe (Canvas Linen Weave) mit dezentem Fadenkreuz.
+-   **💾 Projekt Speichern & Laden (`.mnz`):**
+    -   Projekte können inklusive aller Vektorkonturen, Regionen, Zahlenpositionen, Farblegende, Bildanpassungen und Originalbild als `.mnz`-Datei gespeichert und sofort ohne Neuberechnung wieder geladen werden.
+-   **⚡ Kuwahara-Filterung & Schatten-Lifting:**
+    -   Malerische Abstraktion zur Auflösung von starren Pixelrastern in organische Kunstflächen.
+-   **📐 Glatte Vektor-Outlines & Polylabel:**
+    -   Anti-Aliased Vektorkonturen (RDP + Chaikin-Glättung) und Pole of Inaccessibility für perfekte Zahlenplatzierung mit Schutz-Halo.
+
 ### v1.1.0 (2025-09-10)
 
 -   **Feature: Perzeptuelle Farbmetrik (CIELAB)**
