@@ -1616,10 +1616,18 @@ function preprocessImageData(imageData, config) {
     out[i + 3] = 255;
   }
 
-  // High-performance 5x5 multi-pass bilateral filter for texture smoothing (asphalt/grain slayer)
+  let currentData = out;
+
+  // 1. O(1) Integral-Image Kuwahara Filter (Grid & Window-Checkerboard Slayer)
+  // Replaces rigid architectural grids, bricks, and window panes with fluid painterly planes
+  const useKuwahara = config.kuwahara !== false;
+  if (useKuwahara) {
+    currentData = applyKuwaharaFilter(currentData, width, height, 3);
+  }
+
+  // 2. High-performance 5x5 bilateral filter for fine surface smoothing
   if (smooth) {
-    let currentData = out;
-    const passes = 2; // 2 passes completely smooth out asphalt pebbles and wall grain while preserving sharp edges
+    const passes = useKuwahara ? 1 : 2;
     const sigmaColorSq = 28 * 28 * 2;
 
     for (let p = 0; p < passes; p++) {
@@ -1668,7 +1676,102 @@ function preprocessImageData(imageData, config) {
       }
       currentData = smoothed;
     }
-    return currentData;
+  }
+
+  return currentData;
+}
+
+// Fast O(1) Integral-Image Kuwahara Filter
+function applyKuwaharaFilter(pixels, width, height, radius = 3) {
+  const iw = width + 1;
+  const total = iw * (height + 1);
+  const iR = new Float64Array(total), iG = new Float64Array(total), iB = new Float64Array(total);
+  const iSqR = new Float64Array(total), iSqG = new Float64Array(total), iSqB = new Float64Array(total);
+
+  // Build 2D Integral Images in O(N)
+  for (let y = 0; y < height; y++) {
+    const rowIn = y * width * 4;
+    const rowOut = (y + 1) * iw;
+    const rowPrev = y * iw;
+
+    let sumR = 0, sumG = 0, sumB = 0;
+    let sumSqR = 0, sumSqG = 0, sumSqB = 0;
+
+    for (let x = 0; x < width; x++) {
+      const p = rowIn + x * 4;
+      const r = pixels[p], g = pixels[p + 1], b = pixels[p + 2];
+      sumR += r; sumG += g; sumB += b;
+      sumSqR += r * r; sumSqG += g * g; sumSqB += b * b;
+
+      const idx = rowOut + x + 1;
+      const pIdx = rowPrev + x + 1;
+
+      iR[idx] = iR[pIdx] + sumR;
+      iG[idx] = iG[pIdx] + sumG;
+      iB[idx] = iB[pIdx] + sumB;
+      iSqR[idx] = iSqR[pIdx] + sumSqR;
+      iSqG[idx] = iSqG[pIdx] + sumSqG;
+      iSqB[idx] = iSqB[pIdx] + sumSqB;
+    }
+  }
+
+  const out = new Uint8ClampedArray(pixels.length);
+  const r = radius;
+
+  function rectSum(arr, x0, y0, x1, y1) {
+    return arr[(y1 + 1) * iw + x1 + 1] - arr[y0 * iw + x1 + 1] - arr[(y1 + 1) * iw + x0] + arr[y0 * iw + x0];
+  }
+
+  // Evaluate 4 sub-windows per pixel in O(1)
+  for (let y = 0; y < height; y++) {
+    const rowP = y * width * 4;
+    const y0 = Math.max(0, y - r), y1 = Math.min(height - 1, y + r);
+
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - r), x1 = Math.min(width - 1, x + r);
+
+      const quads = [
+        [x0, y0, x, y],     // TL
+        [x, y0, x1, y],     // TR
+        [x0, y, x, y1],     // BL
+        [x, y, x1, y1]      // BR
+      ];
+
+      let minVar = Infinity;
+      let bestR = pixels[rowP + x * 4], bestG = pixels[rowP + x * 4 + 1], bestB = pixels[rowP + x * 4 + 2];
+
+      for (let q = 0; q < 4; q++) {
+        const [qx0, qy0, qx1, qy1] = quads[q];
+        const count = (qx1 - qx0 + 1) * (qy1 - qy0 + 1);
+        if (count <= 1) continue;
+
+        const sR = rectSum(iR, qx0, qy0, qx1, qy1);
+        const sG = rectSum(iG, qx0, qy0, qx1, qy1);
+        const sB = rectSum(iB, qx0, qy0, qx1, qy1);
+
+        const mR = sR / count, mG = sG / count, mB = sB / count;
+
+        const sqR = rectSum(iSqR, qx0, qy0, qx1, qy1);
+        const sqG = rectSum(iSqG, qx0, qy0, qx1, qy1);
+        const sqB = rectSum(iSqB, qx0, qy0, qx1, qy1);
+
+        const vR = (sqR / count) - (mR * mR);
+        const vG = (sqG / count) - (mG * mG);
+        const vB = (sqB / count) - (mB * mB);
+        const totalVar = vR + vG + vB;
+
+        if (totalVar < minVar) {
+          minVar = totalVar;
+          bestR = mR; bestG = mG; bestB = mB;
+        }
+      }
+
+      const p = rowP + x * 4;
+      out[p] = Math.round(bestR);
+      out[p + 1] = Math.round(bestG);
+      out[p + 2] = Math.round(bestB);
+      out[p + 3] = 255;
+    }
   }
 
   return out;

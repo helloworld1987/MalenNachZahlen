@@ -39,6 +39,7 @@ const valColors = document.getElementById('valColors');
 const sliderMinRegion = document.getElementById('sliderMinRegion');
 const valMinRegion = document.getElementById('valMinRegion');
 const checkSmoothing = document.getElementById('checkSmoothing');
+const checkKuwahara = document.getElementById('checkKuwahara');
 
 const sliderGamma = document.getElementById('sliderGamma');
 const valGamma = document.getElementById('valGamma');
@@ -88,27 +89,27 @@ const btnCrop = document.getElementById('btnCrop');
 // Presets (Balanced for real-world acrylic painting)
 const PRESETS = {
   street: {
-    colors: 24, minRegion: 450, smooth: true,
+    colors: 24, minRegion: 450, smooth: true, kuwahara: true,
     gamma: 0.95, contrast: 1.10, saturation: 1.25, lineWidth: 1.0
   },
   portrait: {
-    colors: 22, minRegion: 200, smooth: true,
+    colors: 22, minRegion: 200, smooth: true, kuwahara: true,
     gamma: 0.90, contrast: 1.05, saturation: 1.08, lineWidth: 1.0
   },
   landscape: {
-    colors: 26, minRegion: 280, smooth: true,
+    colors: 26, minRegion: 280, smooth: true, kuwahara: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.05, lineWidth: 1.0
   },
   popart: {
-    colors: 14, minRegion: 320, smooth: true,
+    colors: 14, minRegion: 320, smooth: true, kuwahara: false,
     gamma: 0.85, contrast: 1.25, saturation: 1.30, lineWidth: 1.5
   },
   beginner: {
-    colors: 14, minRegion: 500, smooth: true,
+    colors: 14, minRegion: 500, smooth: true, kuwahara: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.00, lineWidth: 1.2
   },
   detailed: {
-    colors: 30, minRegion: 200, smooth: true,
+    colors: 30, minRegion: 200, smooth: true, kuwahara: true,
     gamma: 1.00, contrast: 1.05, saturation: 1.05, lineWidth: 1.0
   }
 };
@@ -285,6 +286,9 @@ function applyPreset(name) {
   valMinRegion.textContent = `${p.minRegion} px`;
 
   checkSmoothing.checked = p.smooth;
+  if (checkKuwahara && p.kuwahara !== undefined) {
+    checkKuwahara.checked = p.kuwahara;
+  }
 
   sliderGamma.value = p.gamma;
   valGamma.textContent = p.gamma.toFixed(2);
@@ -416,6 +420,7 @@ function runPipeline() {
     colors: parseInt(sliderColors.value, 10),
     minRegionSize: parseInt(sliderMinRegion.value, 10),
     smooth: checkSmoothing.checked,
+    kuwahara: checkKuwahara ? checkKuwahara.checked : true,
     gamma: parseFloat(sliderGamma.value),
     contrast: parseFloat(sliderContrast.value),
     saturation: parseFloat(sliderSaturation.value)
