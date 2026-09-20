@@ -645,7 +645,7 @@ function renderPreview(ctx, highlightNum = null) {
 
   // Optional Acrylic & Canvas Texture (Impasto, Pinselduktus & Leinwandgewebe)
   if (isAcrylic && highlightNum === null) {
-    applyOrganicAcrylicTexture(d, width, height, boundaries, labels, regions, strength);
+    applyOrganicAcrylicTexture(d, width, height, boundaries, labels, regions, preprocessedPixels, strength);
   }
 
   ctx.putImageData(imgData, 0, 0);
@@ -700,155 +700,184 @@ function softenColorBoundaries(data, labels, width, height) {
   }
 }
 
-// Authentic Acrylic Impasto & Farbraupen Relief Shader
-// Simulates physically applied paint layers: regional brush strokes with individual angles,
-// bristle grooves (Pinselborsten-Riefen), pigment nuances, cotton/linen canvas weave,
-// and Amsterdam satin specular sheen
-function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, regions, strength = 1.0) {
+// Fast Separable Box Blur for Structure Tensor
+function boxBlurFloat(input, w, h, radius) {
+  const output = new Float32Array(w * h);
+  const temp = new Float32Array(w * h);
+  const winSize = 2 * radius + 1;
+
+  // Horizontal pass
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    for (let k = -radius; k <= radius; k++) {
+      const px = Math.max(0, Math.min(w - 1, k));
+      sum += input[row + px];
+    }
+    temp[row] = sum / winSize;
+
+    for (let x = 1; x < w; x++) {
+      const addX = Math.min(w - 1, x + radius);
+      const subX = Math.max(0, x - radius - 1);
+      sum += input[row + addX] - input[row + subX];
+      temp[row + x] = sum / winSize;
+    }
+  }
+
+  // Vertical pass
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let k = -radius; k <= radius; k++) {
+      const py = Math.max(0, Math.min(h - 1, k));
+      sum += temp[py * w + x];
+    }
+    output[x] = sum / winSize;
+
+    for (let y = 1; y < h; y++) {
+      const addY = Math.min(h - 1, y + radius);
+      const subY = Math.max(0, y - radius - 1);
+      sum += temp[addY * w + x] - temp[subY * w + x];
+      output[y * w + x] = sum / winSize;
+    }
+  }
+
+  return output;
+}
+
+// Authentic Acrylic Impasto & Flow-Guided Paint Shader (Reverse-Engineered from Reference Painting)
+// Uses Structure Tensor image flow so strokes naturally follow 3D object contours
+// (horizontal road/curb, vertical buildings/legs, perspective curves on cars),
+// and Line Integral Convolution (LIC) for real finite physical brush dragging
+function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, regions, preprocessedPixels, strength = 1.0) {
   const total = width * height;
 
-  // 1. Fast bounded distance propagation to region borders (up to 3px) for gentle paint lip
-  const dist = new Float32Array(total).fill(99);
+  // 1. Compute guide luminance from preprocessed Kuwahara image (or current canvas data)
+  const lum = new Float32Array(total);
+  if (preprocessedPixels && preprocessedPixels.length === total * 4) {
+    for (let i = 0; i < total; i++) {
+      const p = i * 4;
+      lum[i] = 0.299 * preprocessedPixels[p] + 0.587 * preprocessedPixels[p + 1] + 0.114 * preprocessedPixels[p + 2];
+    }
+  } else {
+    for (let i = 0; i < total; i++) {
+      const p = i * 4;
+      lum[i] = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+    }
+  }
+
+  // 2. Gradients and Structure Tensor (Jxx, Jyy, Jxy)
+  const jxx = new Float32Array(total);
+  const jyy = new Float32Array(total);
+  const jxy = new Float32Array(total);
+
+  for (let y = 1; y < height - 1; y++) {
+    const rowOffset = y * width;
+    for (let x = 1; x < width - 1; x++) {
+      const idx = rowOffset + x;
+      const gx = (lum[idx + 1] - lum[idx - 1]) * 0.5;
+      const gy = (lum[idx + width] - lum[idx - width]) * 0.5;
+      jxx[idx] = gx * gx;
+      jyy[idx] = gy * gy;
+      jxy[idx] = gx * gy;
+    }
+  }
+
+  // Smooth structure tensor components
+  const sJxx = boxBlurFloat(jxx, width, height, 3);
+  const sJyy = boxBlurFloat(jyy, width, height, 3);
+  const sJxy = boxBlurFloat(jxy, width, height, 3);
+
+  // 3. Dominant Flow Angle Field (tangent to image contours) & Coherence
+  const cosA = new Float32Array(total);
+  const sinA = new Float32Array(total);
 
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
-      const c = labels[idx];
-      if ((x < width - 1 && labels[idx + 1] !== c) || (y < height - 1 && labels[idx + width] !== c)) {
-        dist[idx] = 0;
-        if (x < width - 1) dist[idx + 1] = 1;
-        if (y < height - 1) dist[idx + width] = 1;
+      const xx = sJxx[idx], yy = sJyy[idx], xy = sJxy[idx];
+      const coherence = Math.sqrt((xx - yy) * (xx - yy) + 4 * xy * xy) / (xx + yy + 1e-4);
+
+      // Tangent angle along object forms (perpendicular to gradient)
+      const strokeAngle = 0.5 * Math.atan2(2 * xy, xx - yy) + 1.5708;
+
+      // Natural artist hand drift for flat areas
+      const handAngle = 0.785 + Math.sin(x * 0.015 + y * 0.01) * 0.45 + Math.cos(x * 0.008 - y * 0.02) * 0.35;
+
+      const flowW = Math.min(1.0, coherence * 2.2);
+      const angle = strokeAngle * flowW + handAngle * (1.0 - flowW);
+
+      cosA[idx] = Math.cos(angle);
+      sinA[idx] = Math.sin(angle);
+    }
+  }
+
+  // 4. Line Integral Convolution (LIC) for authentic finite brush stroke drag marks
+  const noise = new Float32Array(total);
+  let seed = 123456789;
+  for (let i = 0; i < total; i++) {
+    seed = (seed * 1664525 + 1013904223) | 0;
+    noise[i] = ((seed >>> 16) & 0xffff) / 32768.0 - 1.0;
+  }
+
+  const licTexture = new Float32Array(total);
+  const weights = [0.1, 0.25, 0.5, 0.8, 1.0, 0.8, 0.5, 0.25, 0.1];
+  const totalWeight = 4.3;
+  const stepSize = 2.4;
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      const idx = rowOffset + x;
+      const c = cosA[idx] * stepSize;
+      const s = sinA[idx] * stepSize;
+
+      let acc = 0;
+      for (let k = -4; k <= 4; k++) {
+        const sx = Math.max(0, Math.min(width - 1, (x + k * c + 0.5) | 0));
+        const sy = Math.max(0, Math.min(height - 1, (y + k * s + 0.5) | 0));
+        acc += noise[sy * width + sx] * weights[k + 4];
       }
+      licTexture[idx] = acc / totalWeight;
     }
   }
 
-  // Forward pass
-  for (let y = 0; y < height; y++) {
-    const rowOffset = y * width;
-    for (let x = 0; x < width; x++) {
-      const idx = rowOffset + x;
-      let d = dist[idx];
-      if (x > 0) d = Math.min(d, dist[idx - 1] + 1);
-      if (y > 0) d = Math.min(d, dist[idx - width] + 1);
-      dist[idx] = d;
-    }
-  }
-
-  // Backward pass
-  for (let y = height - 1; y >= 0; y--) {
-    const rowOffset = y * width;
-    for (let x = width - 1; x >= 0; x--) {
-      const idx = rowOffset + x;
-      let d = dist[idx];
-      if (x < width - 1) d = Math.min(d, dist[idx + 1] + 1);
-      if (y < height - 1) d = Math.min(d, dist[idx + width] + 1);
-      dist[idx] = d;
-    }
-  }
-
-  // 2. Base surface height map H with canvas linen weave and soft edge meniscus
+  // 5. Build Surface Impasto Height Map H & Apply Pigment Nuance
   const H = new Float32Array(total);
+
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
-      // Gentle capillary edge meniscus (paint builds slightly at border)
-      const d = dist[idx];
-      const edgeLip = (d <= 2.0) ? Math.cos(d * 0.785) * 1.5 : 0.0;
-      // Orthogonal linen canvas weave
+      const p = idx * 4;
+
+      const c = cosA[idx], s = sinA[idx];
+      const v = -x * s + y * c;
+
+      // Fine bristle grooves perpendicular to flow (spacing ~ 3.2px)
+      const bristle = 0.50 * Math.sin(v * 1.96) + 0.30 * Math.sin(v * 1.21 + 1.2) + 0.20 * Math.sin(v * 0.74 + 2.4);
+
+      // Canvas linen weave (orthogonal warp & weft threads, 3.6px pitch)
       const canvasWeave = (Math.sin(x * 1.745) * Math.sin(y * 1.745)) * 0.45;
-      H[idx] = edgeLip + canvasWeave;
+
+      const lumVal = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
+      const lumFactor = 0.35 + lumVal * 0.85;
+
+      const stroke = licTexture[idx];
+
+      // Pigment nuance inside the paint stroke
+      const pigmentDelta = (stroke * 5.2 + bristle * 3.2) * lumFactor * strength;
+      data[p] = Math.max(0, Math.min(255, data[p] + pigmentDelta));
+      data[p + 1] = Math.max(0, Math.min(255, data[p + 1] + pigmentDelta));
+      data[p + 2] = Math.max(0, Math.min(255, data[p + 2] + pigmentDelta));
+
+      // 3D Impasto height
+      H[idx] = (stroke * 2.4 + bristle * 1.1) * lumFactor * strength + canvasWeave;
     }
   }
 
-  // 3. Place individual, hand-painted, overlapping brush strokes inside each color region
-  const strokeSpacing = 13;
-  const brushLen = 34;
-  const brushRadius = 7.5;
-  const defaultRegion = { angle: 0.48, cosT: 0.88, sinT: 0.47 };
-
-  // Generate grid of stroke seeds with natural hand jitter
-  const strokes = [];
-  for (let y = 0; y < height; y += strokeSpacing) {
-    for (let x = 0; x < width; x += strokeSpacing) {
-      const randSeed = ((x * 37 + y * 101) % 997) / 997.0;
-      const randSeed2 = ((x * 79 + y * 43) % 997) / 997.0;
-      const jx = Math.max(0, Math.min(width - 1, (x + (randSeed - 0.5) * strokeSpacing * 0.8) | 0));
-      const jy = Math.max(0, Math.min(height - 1, (y + (randSeed2 - 0.5) * strokeSpacing * 0.8) | 0));
-      const r = labels[jy * width + jx];
-      if (r >= 0) {
-        strokes.push({ sx: jx, sy: jy, r, seed: randSeed });
-      }
-    }
-  }
-
-  // Render individual strokes
-  for (let i = 0; i < strokes.length; i++) {
-    const { sx, sy, r, seed } = strokes[i];
-    const reg = (regions && regions[r]) ? regions[r] : defaultRegion;
-
-    // Small organic jitter in angle so strokes in a region aren't all machine-parallel
-    const angleJitter = (seed - 0.5) * 0.35;
-    const theta = (reg.angle !== undefined ? reg.angle : 0.48) + angleJitter;
-    const cosT = Math.cos(theta);
-    const sinT = Math.sin(theta);
-
-    const hl = brushLen * 0.5 * (0.8 + seed * 0.4);
-    const hw = brushRadius * (0.85 + (1.0 - seed) * 0.3);
-    const maxDim = 20;
-
-    const x0 = Math.max(0, sx - maxDim);
-    const x1 = Math.min(width, sx + maxDim + 1);
-    const y0 = Math.max(0, sy - maxDim);
-    const y1 = Math.min(height, sy + maxDim + 1);
-
-    // Stroke-to-stroke pigment nuance (dipping the brush)
-    const strokeNuance = (seed - 0.5) * 11.0 * strength;
-
-    for (let py = y0; py < y1; py++) {
-      const rowOffset = py * width;
-      for (let px = x0; px < x1; px++) {
-        // Strict boundary containment: stroke belongs ONLY to its own region!
-        if (labels[rowOffset + px] !== r) continue;
-
-        const dx = px - sx;
-        const dy = py - sy;
-        const u = dx * cosT + dy * sinT;
-        const v = -dx * sinT + dy * cosT;
-
-        const normU = Math.abs(u) / hl;
-        const normV = Math.abs(v) / hw;
-
-        if (normU <= 1.0 && normV <= 1.0) {
-          const wu = Math.cos(normU * 1.5708);
-          const wv = Math.cos(normV * 1.5708);
-          const strokeMask = wu * wv;
-
-          // Fine bristle grooves within this specific stroke (spacing ~ 2.8px)
-          const bristle = 0.55 * Math.sin(v * 2.2) + 0.35 * Math.sin(v * 1.4 + 1.1) + 0.20 * Math.sin(v * 0.8 + 2.0);
-
-          const idx = rowOffset + px;
-          const p = idx * 4;
-
-          const lum = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
-          const lumFactor = 0.35 + lum * 0.85;
-
-          const strokeH = strokeMask * (1.6 + bristle * 0.9) * lumFactor * strength;
-          H[idx] = Math.max(H[idx], H[idx] * 0.35 + strokeH * 1.6);
-
-          const alpha = strokeMask * 0.42 * strength;
-          const deltaCol = (strokeNuance + bristle * 3.5 * lumFactor);
-          data[p] = Math.max(0, Math.min(255, data[p] * (1.0 - alpha) + (data[p] + deltaCol) * alpha));
-          data[p + 1] = Math.max(0, Math.min(255, data[p + 1] * (1.0 - alpha) + (data[p + 1] + deltaCol) * alpha));
-          data[p + 2] = Math.max(0, Math.min(255, data[p + 2] * (1.0 - alpha) + (data[p + 2] + deltaCol) * alpha));
-        }
-      }
-    }
-  }
-
-  // 3. Directional Satin Lighting (Amsterdam Standard Acrylics finish)
-  const scaleH = 0.36 * strength;
+  // 6. Directional Satin Lighting (Amsterdam Standard Acrylics finish)
+  const scaleH = 0.38 * strength;
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
@@ -871,7 +900,6 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
       const diffuse = (nDotL - 0.48) * 32.0 * strength;
 
-      // Satin specular gloss along stroke crests
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
