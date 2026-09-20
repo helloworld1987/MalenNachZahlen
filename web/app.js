@@ -837,24 +837,35 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     const r = st.r;
     const idx = sy * width + sx;
 
+    // Regional field guidance: read the field's elongation and principal inertia axis
+    const reg = (regions && r < regions.length) ? regions[r] : null;
+    const regElong = reg ? (reg.elong || 1.0) : 1.0;
+    const regAngle = reg ? reg.angle : 0;
+
     const xx = sJxx[idx], yy = sJyy[idx], xy = sJxy[idx];
     const coherence = Math.sqrt((xx - yy) * (xx - yy) + 4 * xy * xy) / (xx + yy + 1e-4);
 
     let baseAngle;
-    if (coherence > 0.18) {
-      // High coherence: follow image structure! (vertical on buildings, horizontal on road, curved on cars)
+    if (reg && regElong > 1.25) {
+      // 1. Primary rule: The color field is elongated (stripes, poles, roads, walls, cars)
+      // The brush stroke MUST align along the field's principal axis!
+      baseAngle = regAngle;
+    } else if (coherence > 0.22) {
+      // 2. Secondary rule: High local texture/edge coherence from photo
       baseAngle = 0.5 * Math.atan2(2 * xy, xx - yy) + 1.5708;
     } else {
-      // Low coherence: natural hand sweep angles
-      baseAngle = handAngles[Math.floor(fastRand() * handAngles.length)];
+      // 3. Compact/isotropic field: consistent hand angle deterministic per region
+      baseAngle = reg ? reg.angle : handAngles[(r * 7) % handAngles.length];
     }
 
-    const theta = baseAngle + (fastRand() - 0.5) * 0.3;
+    const theta = baseAngle + (fastRand() - 0.5) * 0.15;
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
 
-    const hl = brushLen * 0.5 * (0.8 + fastRand() * 0.45);
-    const hw = brushRadius * (0.85 + fastRand() * 0.35);
+    // Adaptive brush size: fit narrower fields without spilling
+    const fitRadius = reg ? Math.max(3.5, Math.min(brushRadius, (reg.radius || 8.0) * 1.1)) : brushRadius;
+    const hl = brushLen * 0.5 * (0.85 + fastRand() * 0.35);
+    const hw = fitRadius * (0.85 + fastRand() * 0.30);
 
     const maxDim = Math.ceil(Math.sqrt(hl * hl + hw * hw));
     const x0 = Math.max(0, sx - maxDim);

@@ -2367,13 +2367,17 @@ function extractVectorPolylines(labels, width, height, epsilon = 0.9) {
   return flat;
 }
 
-// --- Polylabel / Pole of Inaccessibility (Optimal Number Center) ---
+// --- Polylabel / Pole of Inaccessibility & Region PCA Orientation ---
 function computeRegionCenters(labels, width, height, numRegions) {
-  // Find bounding box for each region
+  // 1. Find bounding box & spatial moments for each region in single pass
   const minX = new Int32Array(numRegions).fill(width);
   const maxX = new Int32Array(numRegions).fill(-1);
   const minY = new Int32Array(numRegions).fill(height);
   const maxY = new Int32Array(numRegions).fill(-1);
+
+  const m00 = new Float64Array(numRegions);
+  const m10 = new Float64Array(numRegions);
+  const m01 = new Float64Array(numRegions);
 
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
@@ -2384,18 +2388,52 @@ function computeRegionCenters(labels, width, height, numRegions) {
         if (x > maxX[reg]) maxX[reg] = x;
         if (y < minY[reg]) minY[reg] = y;
         if (y > maxY[reg]) maxY[reg] = y;
+        m00[reg]++;
+        m10[reg] += x;
+        m01[reg] += y;
       }
     }
   }
 
+  // Region centroids
+  const cx = new Float32Array(numRegions);
+  const cy = new Float32Array(numRegions);
+  for (let r = 0; r < numRegions; r++) {
+    const count = m00[r];
+    if (count > 0) {
+      cx[r] = m10[r] / count;
+      cy[r] = m01[r] / count;
+    }
+  }
+
+  // 2. Central 2nd-order moments for PCA inertia tensor
+  const mu20 = new Float64Array(numRegions);
+  const mu02 = new Float64Array(numRegions);
+  const mu11 = new Float64Array(numRegions);
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      const reg = labels[rowOffset + x];
+      if (reg < numRegions) {
+        const dx = x - cx[reg];
+        const dy = y - cy[reg];
+        mu20[reg] += dx * dx;
+        mu02[reg] += dy * dy;
+        mu11[reg] += dx * dy;
+      }
+    }
+  }
+
+  // 3. Compute optimal label position (inscribed circle center) and PCA orientation
   const centers = [];
 
   for (let r = 0; r < numRegions; r++) {
     const bx0 = minX[r], bx1 = maxX[r];
     const by0 = minY[r], by1 = maxY[r];
 
-    if (bx1 < bx0 || by1 < by0) {
-      centers.push({ x: 0, y: 0, radius: 0 });
+    if (bx1 < bx0 || by1 < by0 || m00[r] < 1) {
+      centers.push({ x: 0, y: 0, radius: 0, angle: 0, cosT: 1, sinT: 0, elong: 1 });
       continue;
     }
 
@@ -2440,26 +2478,33 @@ function computeRegionCenters(labels, width, height, numRegions) {
       }
     }
 
-    // Regional brush stroke orientation & phase for authentic hand-painted duktus
-    let angle = 0;
-    if (bw > bh * 1.35) {
-      // Elongated horizontally (road stripes, street markings, car bumpers/hood)
-      angle = ((r * 13) % 15 - 7) * (Math.PI / 180.0);
-    } else if (bh > bw * 1.35) {
-      // Elongated vertically (window pillars, lampposts, legs, trees)
-      angle = (90.0 + ((r * 13) % 15 - 7)) * (Math.PI / 180.0);
+    // PCA orientation & elongation ratio of the color field
+    const diff = mu20[r] - mu02[r];
+    const xy = mu11[r];
+    const pcaAngle = 0.5 * Math.atan2(2.0 * xy, diff);
+    const disc = Math.sqrt(diff * diff + 4.0 * xy * xy);
+    const l1 = (mu20[r] + mu02[r] + disc) * 0.5;
+    const l2 = Math.max(0.0, (mu20[r] + mu02[r] - disc) * 0.5);
+    const elong = Math.sqrt(l1 / (l2 + 1e-4));
+
+    let finalAngle;
+    if (elong > 1.25) {
+      // Field has clear elongation: strokes strictly flow along its primary axis
+      finalAngle = pcaAngle;
     } else {
-      // Natural artist hand sweep ~ 28 degrees +- 14 degrees
-      angle = (28.0 + ((r * 29) % 29 - 14)) * (Math.PI / 180.0);
+      // Field is compact/round: natural hand sweep angle varied deterministically per region
+      const handAngles = [0.45, 1.15, 2.10, 2.70];
+      finalAngle = handAngles[(r * 7) % handAngles.length] + ((r * 13) % 20 - 10) * (Math.PI / 180.0);
     }
 
     centers.push({
       x: bestX,
       y: bestY,
       radius: Math.round(bestRadius),
-      angle: angle,
-      cosT: Math.cos(angle),
-      sinT: Math.sin(angle),
+      angle: finalAngle,
+      cosT: Math.cos(finalAngle),
+      sinT: Math.sin(finalAngle),
+      elong: elong,
       phase: ((r * 47) % 100) / 10.0
     });
   }
@@ -2568,6 +2613,7 @@ self.onmessage = function (e) {
             angle: centers[r].angle,
             cosT: centers[r].cosT,
             sinT: centers[r].sinT,
+            elong: centers[r].elong,
             phase: centers[r].phase
           });
         }
