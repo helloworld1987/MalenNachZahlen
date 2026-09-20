@@ -500,10 +500,10 @@ function renderTemplate(ctx, highlightNum = null) {
     ctx.putImageData(imgData, 0, 0);
   }
 
-  // 3. Draw Boundaries
+  // 3. Draw Clean Boundaries (Charcoal Fineliner Look)
   const imgData = ctx.getImageData(0, 0, width, height);
   const d = imgData.data;
-  const boundaryColor = [55, 60, 68]; // Dark slate
+  const boundaryColor = [45, 52, 64]; // Clean deep charcoal
 
   for (let i = 0; i < boundaries.length; i++) {
     if (boundaries[i] === 1) {
@@ -511,38 +511,42 @@ function renderTemplate(ctx, highlightNum = null) {
       d[p] = boundaryColor[0];
       d[p + 1] = boundaryColor[1];
       d[p + 2] = boundaryColor[2];
+      d[p + 3] = 255;
     }
   }
   ctx.putImageData(imgData, 0, 0);
 
-  // 4. Draw Numbers at Polylabel Centers
+  // 4. Draw Numbers at Polylabel Centers (strictly inside regions without crossing borders)
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
   for (let i = 0; i < regions.length; i++) {
     const reg = regions[i];
-    if (reg.radius < 3) continue; // Skip tiny regions to avoid clutter
+    const s = String(reg.number);
+
+    // Enforce sufficient clearance: single digits need radius >= 4px, double digits need >= 6px
+    const minR = s.length > 1 ? 6.0 : 4.0;
+    if (reg.radius < minR) continue;
 
     const isTarget = highlightNum !== null && reg.number === highlightNum;
-    const baseFontSize = Math.max(7, Math.min(18, Math.round(reg.radius * 1.35)));
+    const baseFontSize = Math.max(8, Math.min(16, Math.round(reg.radius * 1.25)));
     const finalSize = Math.round(baseFontSize * numScale);
 
-    ctx.font = `600 ${finalSize}px -apple-system, sans-serif`;
+    ctx.font = `600 ${finalSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
 
     if (isTarget) {
-      // Glow pill behind number
       ctx.fillStyle = '#ef4444';
       ctx.beginPath();
-      ctx.arc(reg.x, reg.y, finalSize * 0.8, 0, Math.PI * 2);
+      ctx.arc(reg.x, reg.y, finalSize * 0.85, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = '#ffffff';
     } else if (highlightNum !== null) {
-      ctx.fillStyle = '#94a3b8'; // Muted
+      ctx.fillStyle = '#94a3b8';
     } else {
-      ctx.fillStyle = '#1e293b'; // Normal dark
+      ctx.fillStyle = '#1e293b';
     }
 
-    ctx.fillText(String(reg.number), reg.x, reg.y + 0.5);
+    ctx.fillText(s, reg.x, reg.y + 0.5);
   }
 }
 

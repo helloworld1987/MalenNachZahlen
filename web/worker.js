@@ -2000,6 +2000,60 @@ function segmentAndCleanIslands(pixelClusters, width, height, palette, minRegion
   };
 }
 
+// Mode/Majority filter: rounds jagged pixel staircases and eliminates razor-thin slivers
+function smoothLabelField(labels, width, height, passes = 2) {
+  let current = labels;
+
+  for (let p = 0; p < passes; p++) {
+    const next = new Uint32Array(width * height);
+
+    for (let y = 1; y < height - 1; y++) {
+      const rowOffset = y * width;
+      for (let x = 1; x < width - 1; x++) {
+        const idx = rowOffset + x;
+        const curr = current[idx];
+
+        // 3x3 neighborhood
+        const n0 = current[idx - width - 1], n1 = current[idx - width], n2 = current[idx - width + 1];
+        const n3 = current[idx - 1],         n4 = curr,                 n5 = current[idx + 1];
+        const n6 = current[idx + width - 1], n7 = current[idx + width], n8 = current[idx + width + 1];
+
+        const arr = [n0, n1, n2, n3, n4, n5, n6, n7, n8];
+        let bestLabel = curr;
+        let maxCount = 0;
+
+        for (let i = 0; i < 9; i++) {
+          let count = 1;
+          for (let j = i + 1; j < 9; j++) {
+            if (arr[i] === arr[j]) count++;
+          }
+          if (count > maxCount) {
+            maxCount = count;
+            bestLabel = arr[i];
+          }
+        }
+
+        // If a label holds dominance in 3x3 (>= 5 out of 9), adopt it to round the corner
+        next[idx] = maxCount >= 5 ? bestLabel : curr;
+      }
+    }
+
+    // Border rows
+    for (let x = 0; x < width; x++) {
+      next[x] = current[x];
+      next[(height - 1) * width + x] = current[(height - 1) * width + x];
+    }
+    for (let y = 0; y < height; y++) {
+      next[y * width] = current[y * width];
+      next[y * width + width - 1] = current[y * width + width - 1];
+    }
+
+    current = next;
+  }
+
+  return current;
+}
+
 // --- Boundary Detection ---
 function extractBoundaries(labels, width, height) {
   const numPixels = width * height;
@@ -2127,13 +2181,16 @@ self.onmessage = function (e) {
         config.minRegionSize ?? 80
       );
 
-      // 4. Outlines Extraction
-      self.postMessage({ type: 'progress', step: 4, total: 6, msg: 'Konturlinien berechnen...' });
-      const boundaries = extractBoundaries(labels, width, height);
+      // Smooth contours to eliminate jagged pixel steps and wobbly worm edges
+      const smoothedLabels = smoothLabelField(labels, width, height, 2);
+
+      // 4. Outlines Extraction (clean, flowing curves)
+      self.postMessage({ type: 'progress', step: 4, total: 6, msg: 'Fließende Konturlinien berechnen...' });
+      const boundaries = extractBoundaries(smoothedLabels, width, height);
 
       // 5. Smart Number Placement (Pole of Inaccessibility)
       self.postMessage({ type: 'progress', step: 5, total: 6, msg: 'Zahlenpositionen optimal platzieren (Polylabel)...' });
-      const centers = computeRegionCenters(labels, width, height, numRegions);
+      const centers = computeRegionCenters(smoothedLabels, width, height, numRegions);
 
       // 6. Build Final Legend & Compact Palette
       self.postMessage({ type: 'progress', step: 6, total: 6, msg: 'Farblegende und Vorlage zusammenstellen...' });
@@ -2190,12 +2247,12 @@ self.onmessage = function (e) {
         result: {
           width,
           height,
-          labels,
+          labels: smoothedLabels,
           boundaries,
           palette: activeColors,
           regions
         }
-      }, [labels.buffer, boundaries.buffer]);
+      }, [smoothedLabels.buffer, boundaries.buffer]);
 
     } catch (err) {
       self.postMessage({ type: 'error', error: err.message, stack: err.stack });
