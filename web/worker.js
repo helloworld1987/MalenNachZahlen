@@ -2583,9 +2583,9 @@ self.onmessage = function (e) {
           polylines,
           palette: activeColors,
           regions,
-          preprocessedPixels: currentData
+          preprocessedPixels: processedPixels
         }
-      }, [smoothedLabels.buffer, boundaries.buffer, polylines.buffer, currentData.buffer]);
+      }, [smoothedLabels.buffer, boundaries.buffer, polylines.buffer, processedPixels.buffer]);
 
     } catch (err) {
       self.postMessage({ type: 'error', error: err.message, stack: err.stack });
