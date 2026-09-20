@@ -787,19 +787,73 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
   const sJyy = boxBlurFloat(jyy, width, height, 3);
   const sJxy = boxBlurFloat(jxy, width, height, 3);
 
-  // 3. Initialize Height Map with Canvas Linen Weave Base
+  // 3. Fast Two-Pass Distance Transform to Region Boundaries (Chamfer 3-4 metric)
+  // Used to model paint boundary ridges (Farbstau an den Rändern) and field centers
+  const dist = new Float32Array(total);
+  const INF = 9999.0;
+  for (let i = 0; i < total; i++) {
+    dist[i] = (boundaries && boundaries[i] === 1) ? 0.0 : INF;
+  }
+
+  // Forward pass (top-left to bottom-right)
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      const idx = row + x;
+      let d = dist[idx];
+      if (d === 0.0) continue;
+      if (x > 0) d = Math.min(d, dist[idx - 1] + 1.0);
+      if (y > 0) {
+        d = Math.min(d, dist[idx - width] + 1.0);
+        if (x > 0) d = Math.min(d, dist[idx - width - 1] + 1.414);
+        if (x < width - 1) d = Math.min(d, dist[idx - width + 1] + 1.414);
+      }
+      dist[idx] = d;
+    }
+  }
+
+  // Backward pass (bottom-right to top-left)
+  for (let y = height - 1; y >= 0; y--) {
+    const row = y * width;
+    for (let x = width - 1; x >= 0; x--) {
+      const idx = row + x;
+      let d = dist[idx];
+      if (x < width - 1) d = Math.min(d, dist[idx + 1] + 1.0);
+      if (y < height - 1) {
+        d = Math.min(d, dist[idx + width] + 1.0);
+        if (x < width - 1) d = Math.min(d, dist[idx + width + 1] + 1.414);
+        if (x > 0) d = Math.min(d, dist[idx + width - 1] + 1.414);
+      }
+      dist[idx] = d;
+    }
+  }
+
+  // 4. Initialize Height Map with Canvas Linen Weave Base and Boundary Paint Ridges
   const H = new Float32Array(total);
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
     for (let x = 0; x < width; x++) {
-      H[rowOffset + x] = Math.sin(x * 1.745) * Math.sin(y * 1.745) * 0.45;
+      const idx = rowOffset + x;
+      const dVal = dist[idx];
+
+      // Canvas linen weave (subtle woven threads, pitch ~ 3.6px)
+      const canvas = Math.sin(x * 1.745) * Math.sin(y * 1.745) * 0.32;
+
+      // Authentic Acrylic Paint Boundary Ridge: paint builds up 1.5 - 3.5px from edge
+      const edgeDiff = dVal - 2.2;
+      const ridge = Math.exp(-(edgeDiff * edgeDiff) / 3.2) * 2.2 * strength;
+
+      // Gentle paint dome toward region interior
+      const fillDome = Math.min(1.0, dVal / 9.0) * 0.8 * strength;
+
+      H[idx] = canvas + ridge + fillDome;
     }
   }
 
-  // 4. Generate Stroke Seeds on Grid with Jitter
-  const strokeSpacing = 14;
-  const brushLen = 36;
-  const brushRadius = 8.5;
+  // 5. Broad Organic Physical Brush Marks (Only where paint is actively brushed)
+  const strokeSpacing = 22;
+  const brushLen = 46;
+  const brushRadius = 14;
 
   let seedRng = 42;
   function fastRand() {
@@ -810,8 +864,8 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
   const strokes = [];
   for (let y = 0; y < height; y += strokeSpacing) {
     for (let x = 0; x < width; x += strokeSpacing) {
-      const jx = Math.round(x + (fastRand() - 0.5) * strokeSpacing * 0.9);
-      const jy = Math.round(y + (fastRand() - 0.5) * strokeSpacing * 0.9);
+      const jx = Math.round(x + (fastRand() - 0.5) * strokeSpacing * 0.8);
+      const jy = Math.round(y + (fastRand() - 0.5) * strokeSpacing * 0.8);
       if (jx >= 0 && jx < width && jy >= 0 && jy < height) {
         const idx = jy * width + jx;
         const r = labels ? labels[idx] : 0;
@@ -820,7 +874,7 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     }
   }
 
-  // SHUFFLE strokes with Fisher-Yates so they never execute in rows
+  // Shuffle strokes
   for (let i = strokes.length - 1; i > 0; i--) {
     const j = Math.floor(fastRand() * (i + 1));
     const temp = strokes[i];
@@ -828,7 +882,6 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     strokes[j] = temp;
   }
 
-  // 5. Render Bold Discrete Physical Brush Strokes
   const handAngles = [0.45, 1.15, 2.10, 2.70];
   for (let i = 0; i < strokes.length; i++) {
     const st = strokes[i];
@@ -837,8 +890,9 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     const r = st.r;
     const idx = sy * width + sx;
 
-    // Regional field guidance: read the field's elongation and principal inertia axis
     const reg = (regions && r < regions.length) ? regions[r] : null;
+    if (reg && reg.area && reg.area < 35) continue; // Tiny fields remain clean and smooth
+
     const regElong = reg ? (reg.elong || 1.0) : 1.0;
     const regAngle = reg ? reg.angle : 0;
 
@@ -847,25 +901,20 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
 
     let baseAngle;
     if (reg && regElong > 1.25) {
-      // 1. Primary rule: The color field is elongated (stripes, poles, roads, walls, cars)
-      // The brush stroke MUST align along the field's principal axis!
       baseAngle = regAngle;
     } else if (coherence > 0.22) {
-      // 2. Secondary rule: High local texture/edge coherence from photo
       baseAngle = 0.5 * Math.atan2(2 * xy, xx - yy) + 1.5708;
     } else {
-      // 3. Compact/isotropic field: consistent hand angle deterministic per region
       baseAngle = reg ? reg.angle : handAngles[(r * 7) % handAngles.length];
     }
 
-    const theta = baseAngle + (fastRand() - 0.5) * 0.15;
+    const theta = baseAngle + (fastRand() - 0.5) * 0.12;
     const cosT = Math.cos(theta);
     const sinT = Math.sin(theta);
 
-    // Adaptive brush size: fit narrower fields without spilling
-    const fitRadius = reg ? Math.max(3.5, Math.min(brushRadius, (reg.radius || 8.0) * 1.1)) : brushRadius;
-    const hl = brushLen * 0.5 * (0.85 + fastRand() * 0.35);
-    const hw = fitRadius * (0.85 + fastRand() * 0.30);
+    const fitRadius = reg ? Math.max(5.0, Math.min(brushRadius, (reg.radius || 10.0) * 1.2)) : brushRadius;
+    const hl = brushLen * 0.5 * (0.9 + fastRand() * 0.3);
+    const hw = fitRadius * (0.9 + fastRand() * 0.25);
 
     const maxDim = Math.ceil(Math.sqrt(hl * hl + hw * hw));
     const x0 = Math.max(0, sx - maxDim);
@@ -875,8 +924,7 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
 
     const pSeed = idx * 4;
     const lumBase = (0.299 * data[pSeed] + 0.587 * data[pSeed + 1] + 0.114 * data[pSeed + 2]) / 255.0;
-    const lumFactor = 0.40 + lumBase * 0.85;
-    const nuance = (fastRand() * 16.0 - 8.0) * lumFactor * strength;
+    const nuance = (fastRand() * 10.0 - 5.0) * strength;
 
     for (let py = y0; py <= y1; py++) {
       const rowOffset = py * width;
@@ -897,16 +945,16 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
           const wv = Math.cos(normV * 1.5708);
           const strokeMask = wu * wv;
 
-          // Fine bristle grooves along brush drag
-          const bristle = 0.55 * Math.sin(v * 2.2) + 0.35 * Math.sin(v * 1.4 + 1.1) + 0.20 * Math.sin(v * 0.8 + 2.0);
+          // Broad, smooth bristle drag (spacing ~ 5px)
+          const bristle = 0.50 * Math.sin(v * 1.25) + 0.30 * Math.sin(v * 0.70 + 1.1);
 
-          // Bold 3D impasto height
-          const strokeH = strokeMask * (2.2 + bristle * 1.2) * lumFactor * strength;
-          H[pIdx] = Math.max(H[pIdx], H[pIdx] * 0.25 + strokeH * 2.0);
+          // Physical stroke impasto
+          const strokeH = strokeMask * (1.2 + bristle * 0.6) * strength;
+          H[pIdx] = Math.max(H[pIdx], H[pIdx] * 0.4 + strokeH);
 
-          // Bold pigment nuance inside stroke
-          const alpha = strokeMask * 0.50;
-          const deltaCol = nuance + bristle * 5.0 * lumFactor * strength;
+          // Subtle pigment nuance inside stroke (smooth color body)
+          const alpha = strokeMask * 0.30;
+          const deltaCol = (nuance + bristle * 3.0) * strength;
           const p = pIdx * 4;
           data[p] = Math.max(0, Math.min(255, data[p] * (1.0 - alpha) + (data[p] + deltaCol) * alpha));
           data[p + 1] = Math.max(0, Math.min(255, data[p + 1] * (1.0 - alpha) + (data[p + 1] + deltaCol) * alpha));
@@ -916,8 +964,8 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
     }
   }
 
-  // 6. Directional Satin Lighting (Amsterdam Standard Acrylics finish)
-  const scaleH = 0.48 * strength;
+  // 6. Directional Satin Lighting with Deep Black Protection
+  const scaleH = 0.42 * strength;
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
@@ -937,12 +985,18 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, reg
       const nz = 1.0 * invN;
 
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.48) * 44.0 * strength;
 
+      // Dark protection: deep blacks (lamp black) retain pure depth without grey washing
+      const lumVal = (0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2]) / 255.0;
+      const lumFactor = Math.max(0.0, Math.min(1.0, (lumVal - 0.03) / 0.20));
+
+      const diffuse = (nDotL - 0.48) * 34.0 * strength * lumFactor;
+
+      // Crisp specular reflections along paint ridge crests and car curves
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
-        spec = Math.pow(rz, 8) * 32.0 * strength;
+        spec = Math.pow(rz, 10) * 46.0 * strength;
       }
 
       data[p] = Math.max(0, Math.min(255, data[p] + diffuse + spec));
