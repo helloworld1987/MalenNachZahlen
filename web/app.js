@@ -89,28 +89,28 @@ const btnCrop = document.getElementById('btnCrop');
 // Presets (Balanced for real-world acrylic painting)
 const PRESETS = {
   street: {
-    colors: 24, minRegion: 450, smooth: true, kuwahara: true,
-    gamma: 0.95, contrast: 1.10, saturation: 1.25, lineWidth: 1.0
+    colors: 26, minRegion: 240, smooth: true, kuwahara: true,
+    gamma: 1.05, contrast: 1.05, saturation: 1.20, lineWidth: 1.0
   },
   portrait: {
     colors: 22, minRegion: 200, smooth: true, kuwahara: true,
-    gamma: 0.90, contrast: 1.05, saturation: 1.08, lineWidth: 1.0
+    gamma: 0.95, contrast: 1.05, saturation: 1.08, lineWidth: 1.0
   },
   landscape: {
-    colors: 26, minRegion: 280, smooth: true, kuwahara: true,
+    colors: 26, minRegion: 260, smooth: true, kuwahara: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.05, lineWidth: 1.0
   },
   popart: {
-    colors: 14, minRegion: 320, smooth: true, kuwahara: false,
+    colors: 14, minRegion: 300, smooth: true, kuwahara: false,
     gamma: 0.85, contrast: 1.25, saturation: 1.30, lineWidth: 1.5
   },
   beginner: {
-    colors: 14, minRegion: 500, smooth: true, kuwahara: true,
+    colors: 14, minRegion: 450, smooth: true, kuwahara: true,
     gamma: 1.00, contrast: 1.00, saturation: 1.00, lineWidth: 1.2
   },
   detailed: {
-    colors: 30, minRegion: 200, smooth: true, kuwahara: true,
-    gamma: 1.00, contrast: 1.05, saturation: 1.05, lineWidth: 1.0
+    colors: 32, minRegion: 160, smooth: true, kuwahara: true,
+    gamma: 1.05, contrast: 1.05, saturation: 1.15, lineWidth: 1.0
   }
 };
 
@@ -685,46 +685,83 @@ function softenColorBoundaries(data, labels, width, height) {
   }
 }
 
-// Authentic Acrylic Impasto & Canvas Shader
-// Eliminates all artificial net/corduroy stripes; renders broad organic knife sweeps and fine linen grain
+// Authentic Acrylic Impasto & Farbraupen Relief Shader
+// Simulates physically applied paint layers: 3D rounded paint lips (Farbraupen) at field borders,
+// organic palette-knife sweeps, and satin acrylic sheen
 function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, strength = 1.0) {
   const total = width * height;
-  const H = new Float32Array(total);
 
-  // 1. Build continuous organic surface height map (ZERO periodic stripes or net patterns)
+  // 1. Fast bounded distance propagation to region borders (up to 4px) for rounded paint lips
+  const dist = new Float32Array(total).fill(99);
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      const idx = rowOffset + x;
+      const c = labels[idx];
+      if ((x < width - 1 && labels[idx + 1] !== c) || (y < height - 1 && labels[idx + width] !== c)) {
+        dist[idx] = 0;
+        if (x < width - 1) dist[idx + 1] = 1;
+        if (y < height - 1) dist[idx + width] = 1;
+      }
+    }
+  }
+
+  // Forward pass
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      const idx = rowOffset + x;
+      let d = dist[idx];
+      if (x > 0) d = Math.min(d, dist[idx - 1] + 1);
+      if (y > 0) d = Math.min(d, dist[idx - width] + 1);
+      dist[idx] = d;
+    }
+  }
+
+  // Backward pass
+  for (let y = height - 1; y >= 0; y--) {
+    const rowOffset = y * width;
+    for (let x = width - 1; x >= 0; x--) {
+      const idx = rowOffset + x;
+      let d = dist[idx];
+      if (x < width - 1) d = Math.min(d, dist[idx + 1] + 1);
+      if (y < height - 1) d = Math.min(d, dist[idx + width] + 1);
+      dist[idx] = d;
+    }
+  }
+
+  // 2. Build surface height map H (Thick paint body + 3D Farbraupen + Linen canvas grain)
+  const H = new Float32Array(total);
   for (let y = 0; y < height; y++) {
     const rowOffset = y * width;
 
     for (let x = 0; x < width; x++) {
       const idx = rowOffset + x;
 
-      // Coordinate along sweeping stroke (u) and across stroke (v) with period ~150-250px
+      // Physical 3D Farbraupe (rounded bead of acrylic paint where brush stroke meets border)
+      const d = dist[idx];
+      const edgeRidge = d <= 3.0 ? Math.cos(d * 0.5236) * 5.2 : 0.0;
+
+      // Broad organic palette-knife impasto sweeps (period 60-140px, non-periodic)
       const u = x * 0.88 + y * 0.47;
       const v = -x * 0.47 + y * 0.88;
+      const knifeFacet = Math.sin(u * 0.025 + Math.sin(v * 0.03) * 1.8) * 2.6 + Math.cos(v * 0.038) * 1.5;
 
-      // 1. Large expressive palette-knife facets (long, gentle sweeps)
-      const knifeFacet = Math.sin(u * 0.012 + Math.sin(v * 0.015) * 1.5) * 2.0;
-
-      // 2. Subtle paint body undulation
-      const swirl = Math.cos(v * 0.025 + Math.sin(u * 0.02) * 1.2) * 0.9;
-
-      // 3. Natural linen canvas grain (stochastic micro-texture, 1-2px, NO repeating mesh!)
+      // Fine linen canvas grain (stochastic micro-texture, 1-2px)
       const rand = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-      const canvasGrain = (rand - Math.floor(rand) - 0.5) * 0.65;
+      const canvasGrain = (rand - Math.floor(rand) - 0.5) * 0.85;
 
-      // 4. Soft acrylic paint edge lip (accumulation where brush stroke stops)
-      const edgeLip = boundaries && boundaries[idx] === 1 ? 3.2 : 0;
-
-      H[idx] = knifeFacet + swirl + canvasGrain + edgeLip;
+      H[idx] = edgeRidge + knifeFacet + canvasGrain;
     }
   }
 
-  // 2. 3D Directional Lighting (Natural sun from top-left, 45 degrees)
+  // 3. 3D Directional Lighting (Natural sun from top-left, 45 degrees)
   const lx = -0.55, ly = -0.65, lz = 0.52;
   const invL = 1.0 / Math.sqrt(lx * lx + ly * ly + lz * lz);
   const nLx = lx * invL, nLy = ly * invL, nLz = lz * invL;
 
-  const scaleH = 0.35 * strength;
+  const scaleH = 0.40 * strength;
 
   for (let y = 1; y < height - 1; y++) {
     const rowOffset = y * width;
@@ -741,24 +778,28 @@ function applyOrganicAcrylicTexture(data, width, height, boundaries, labels, str
       const ny = -dhdy * invN;
       const nz = 1.0 * invN;
 
-      // Diffuse light (soft tactile 3D relief)
+      // Diffuse relief
       const nDotL = nx * nLx + ny * nLy + nz * nLz;
-      const diffuse = (nDotL - 0.50) * 36 * strength;
+      const diffuse = (nDotL - 0.48) * 44 * strength;
 
-      // Specular sheen for glossy acrylic paint
+      // Satin specular sheen on thick paint highlights
       let spec = 0;
       if (nDotL > 0) {
         const rz = Math.max(0, 2 * nDotL * nz - nLz);
-        spec = Math.pow(rz, 12) * 24 * strength;
+        spec = Math.pow(rz, 10) * 32 * strength;
       }
 
-      const r = data[p], g = data[p + 1], b = data[p + 2];
-      const isDark = (r + g + b) < 180;
-      const gloss = isDark ? spec * 1.1 : spec * 0.25;
+      // Contact shadow groove at opposite side of paint lip
+      const d = dist[idx];
+      const cavity = (d < 1.5 && nDotL < 0.45) ? -6.0 * strength : 0.0;
 
-      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss));
-      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss));
-      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss));
+      const r = data[p], g = data[p + 1], b = data[p + 2];
+      const isDark = (r + g + b) < 190;
+      const gloss = isDark ? spec * 1.15 : spec * 0.35;
+
+      data[p] = Math.max(0, Math.min(255, r + diffuse + gloss + cavity));
+      data[p + 1] = Math.max(0, Math.min(255, g + diffuse + gloss + cavity));
+      data[p + 2] = Math.max(0, Math.min(255, b + diffuse + gloss + cavity));
     }
   }
 }
