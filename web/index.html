@@ -35,8 +35,19 @@
         </button>
         
         <div class="dropdown">
+          <button class="btn btn-secondary" id="btnProjectMenu" title="Projekt speichern oder laden">
+            💾 Projekt ▾
+          </button>
+          <div class="dropdown-content" id="projectDropdown">
+            <button id="btnSaveProject">💾 Berechnung speichern (.mnz)</button>
+            <button id="btnLoadProject">📂 Berechnung laden (.mnz)</button>
+          </div>
+        </div>
+        <input type="file" id="projectFileInput" accept=".mnz,.json" style="display:none;">
+
+        <div class="dropdown">
           <button class="btn btn-accent" id="btnExportMenu">
-            💾 Exportieren ▾
+            📤 Exportieren ▾
           </button>
           <div class="dropdown-content" id="exportDropdown">
             <button id="btnExportPdf">📄 Druck-PDF (3 Seiten)</button>

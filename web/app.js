@@ -236,8 +236,34 @@ function initEvents() {
   const exportDropdown = document.getElementById('exportDropdown');
   btnExportMenu.addEventListener('click', (e) => {
     e.stopPropagation();
+    document.querySelectorAll('.dropdown').forEach(d => {
+      if (d !== btnExportMenu.parentElement) d.classList.remove('open');
+    });
     btnExportMenu.parentElement.classList.toggle('open');
   });
+
+  // Project menu
+  const btnProjectMenu = document.getElementById('btnProjectMenu');
+  if (btnProjectMenu) {
+    btnProjectMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.dropdown').forEach(d => {
+        if (d !== btnProjectMenu.parentElement) d.classList.remove('open');
+      });
+      btnProjectMenu.parentElement.classList.toggle('open');
+    });
+  }
+
+  const btnSaveProject = document.getElementById('btnSaveProject');
+  if (btnSaveProject) btnSaveProject.addEventListener('click', saveProject);
+
+  const btnLoadProject = document.getElementById('btnLoadProject');
+  const projectFileInput = document.getElementById('projectFileInput');
+  if (btnLoadProject && projectFileInput) {
+    btnLoadProject.addEventListener('click', () => projectFileInput.click());
+    projectFileInput.addEventListener('change', handleProjectFileSelect);
+  }
+
   window.addEventListener('click', () => {
     document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('open'));
   });
@@ -1434,6 +1460,181 @@ function exportPdf() {
   doc.addImage(canvasPreview.toDataURL('image/png'), 'PNG', drawX, drawY, drawW, drawH);
 
   doc.save('malen-nach-zahlen-druckvorlage.pdf');
+}
+
+// --- Project Save & Load (.mnz) ---
+// Serializes the full calculation (labels, boundaries, polylines, palette, regions, settings, original image)
+// into a lightweight, self-contained JSON/ArrayBuffer file so it can be restored instantly without recalculation.
+function saveProject() {
+  if (!processedData) {
+    alert('Es ist noch keine Berechnung vorhanden, die gespeichert werden kann.');
+    return;
+  }
+
+  // 1. Convert original image to Base64 data URL
+  let originalImageBase64 = null;
+  if (originalImage) {
+    const c = document.createElement('canvas');
+    c.width = originalImage.naturalWidth || originalImage.width;
+    c.height = originalImage.naturalHeight || originalImage.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(originalImage, 0, 0);
+    originalImageBase64 = c.toDataURL('image/jpeg', 0.95);
+  }
+
+  // 2. Helper to encode typed arrays as compact Base64
+  function bufferToBase64(typedArray) {
+    if (!typedArray) return null;
+    const bytes = new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength);
+    let binary = '';
+    const len = bytes.byteLength;
+    const chunkSize = 0x8000;
+    for (let i = 0; i < len; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, Math.min(i + chunkSize, len)));
+    }
+    return btoa(binary);
+  }
+
+  const project = {
+    version: '1.0',
+    timestamp: new Date().toISOString(),
+    width: processedData.width,
+    height: processedData.height,
+    settings: {
+      colors: sliderColors.value,
+      minRegionSize: sliderMinRegion.value,
+      smooth: checkSmoothing.checked,
+      kuwahara: checkKuwahara ? checkKuwahara.checked : true,
+      gamma: sliderGamma.value,
+      contrast: sliderContrast.value,
+      saturation: sliderSaturation.value,
+      lineWidth: sliderLineWidth.value,
+      numberScale: sliderNumberScale.value,
+      acrylicEffect: checkAcrylicEffect ? checkAcrylicEffect.checked : true,
+      impasto: sliderImpasto ? sliderImpasto.value : '1.0',
+      paperFormat: selectPaperFormat.value
+    },
+    palette: processedData.palette,
+    regions: processedData.regions,
+    // Binary buffers packed in Base64
+    labels: bufferToBase64(processedData.labels),
+    boundaries: bufferToBase64(processedData.boundaries),
+    polylines: bufferToBase64(processedData.polylines),
+    preprocessedPixels: bufferToBase64(processedData.preprocessedPixels),
+    originalImage: originalImageBase64
+  };
+
+  const jsonStr = JSON.stringify(project);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.download = `malen-nach-zahlen-projekt-${dateStr}.mnz`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function handleProjectFileSelect(e) {
+  if (!e.target.files || !e.target.files[0]) return;
+  const file = e.target.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function (evt) {
+    try {
+      const project = JSON.parse(evt.target.result);
+      if (!project || !project.labels || !project.palette) {
+        throw new Error('Ungültiges Projekt-Dateiformat.');
+      }
+
+      function base64ToUint8(b64) {
+        if (!b64) return null;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return bytes;
+      }
+
+      // Reconstruct Typed Arrays
+      const labelsBytes = base64ToUint8(project.labels);
+      const labels = new Uint32Array(labelsBytes.buffer);
+
+      const boundariesBytes = base64ToUint8(project.boundaries);
+      const boundaries = boundariesBytes ? new Uint8Array(boundariesBytes.buffer) : null;
+
+      const polylinesBytes = base64ToUint8(project.polylines);
+      const polylines = polylinesBytes ? new Float32Array(polylinesBytes.buffer) : null;
+
+      const preprocBytes = base64ToUint8(project.preprocessedPixels);
+      const preprocessedPixels = preprocBytes ? new Uint8ClampedArray(preprocBytes.buffer) : null;
+
+      // Restore processedData
+      processedData = {
+        width: project.width,
+        height: project.height,
+        labels,
+        boundaries,
+        polylines,
+        palette: project.palette,
+        regions: project.regions,
+        preprocessedPixels
+      };
+
+      // Restore UI Settings
+      const s = project.settings || {};
+      if (s.colors) { sliderColors.value = s.colors; valColors.textContent = s.colors; }
+      if (s.minRegionSize) { sliderMinRegion.value = s.minRegionSize; valMinRegion.textContent = `${s.minRegionSize} px`; }
+      if (s.smooth !== undefined) checkSmoothing.checked = s.smooth;
+      if (s.kuwahara !== undefined && checkKuwahara) checkKuwahara.checked = s.kuwahara;
+      if (s.gamma) { sliderGamma.value = s.gamma; valGamma.textContent = parseFloat(s.gamma).toFixed(2); }
+      if (s.contrast) { sliderContrast.value = s.contrast; valContrast.textContent = parseFloat(s.contrast).toFixed(2); }
+      if (s.saturation) { sliderSaturation.value = s.saturation; valSaturation.textContent = parseFloat(s.saturation).toFixed(2); }
+      if (s.lineWidth) { sliderLineWidth.value = s.lineWidth; valLineWidth.textContent = `${s.lineWidth} px`; }
+      if (s.numberScale) { sliderNumberScale.value = s.numberScale; valNumberScale.textContent = `${s.numberScale}%`; }
+      if (s.acrylicEffect !== undefined && checkAcrylicEffect) {
+        checkAcrylicEffect.checked = s.acrylicEffect;
+        const grp = document.getElementById('groupImpasto');
+        if (grp) grp.style.display = s.acrylicEffect ? 'flex' : 'none';
+      }
+      if (s.impasto && sliderImpasto) {
+        sliderImpasto.value = s.impasto;
+        if (valImpasto) valImpasto.textContent = `${Math.round(s.impasto * 100)}%`;
+      }
+      if (s.paperFormat && selectPaperFormat) selectPaperFormat.value = s.paperFormat;
+
+      // Restore Original Image
+      if (project.originalImage) {
+        const img = new Image();
+        img.onload = function () {
+          originalImage = img;
+          uncroppedImage = img;
+          isCropped = false;
+          emptyState.style.display = 'none';
+          btnProcess.disabled = false;
+          zoomToFit();
+          renderCurrentView();
+          buildPaletteUI();
+        };
+        img.src = project.originalImage;
+      } else {
+        emptyState.style.display = 'none';
+        btnProcess.disabled = false;
+        zoomToFit();
+        renderCurrentView();
+        buildPaletteUI();
+      }
+
+      // Reset file input so same file can be loaded again if desired
+      e.target.value = '';
+    } catch (err) {
+      alert('Fehler beim Laden der Projektdatei: ' + err.message);
+      console.error(err);
+    }
+  };
+
+  reader.readAsText(file);
 }
 
 // Start app
